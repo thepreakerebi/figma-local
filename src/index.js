@@ -1498,7 +1498,7 @@ return 'Created ' + count + ' color variables in ${options.collection}';
 
 tokens
   .command('preset <name>')
-  .description('Add a design system preset (shadcn, material)')
+  .description('Add color presets: shadcn, radix')
   .action(async (preset) => {
     checkConnection();
 
@@ -1659,13 +1659,76 @@ return 'Created ' + primCount + ' primitives + ' + semCount + ' semantic tokens 
         console.error(chalk.red(error.message));
       }
 
+    } else if (presetLower === 'radix') {
+      // Radix UI Colors - 12 color families with 12 steps each
+      const spinner = ora('Adding Radix UI colors...').start();
+
+      const radixColors = {
+        gray: { 1: '#fcfcfc', 2: '#f9f9f9', 3: '#f0f0f0', 4: '#e8e8e8', 5: '#e0e0e0', 6: '#d9d9d9', 7: '#cecece', 8: '#bbbbbb', 9: '#8d8d8d', 10: '#838383', 11: '#646464', 12: '#202020' },
+        slate: { 1: '#fcfcfd', 2: '#f9f9fb', 3: '#f0f0f3', 4: '#e8e8ec', 5: '#e0e1e6', 6: '#d9d9e0', 7: '#cdced6', 8: '#b9bbc6', 9: '#8b8d98', 10: '#80838d', 11: '#60646c', 12: '#1c2024' },
+        red: { 1: '#fffcfc', 2: '#fff7f7', 3: '#feebec', 4: '#ffdbdc', 5: '#ffcdce', 6: '#fdbdbe', 7: '#f4a9aa', 8: '#eb8e90', 9: '#e5484d', 10: '#dc3e42', 11: '#ce2c31', 12: '#641723' },
+        orange: { 1: '#fefcfb', 2: '#fff7ed', 3: '#ffefd6', 4: '#ffdfb5', 5: '#ffd19a', 6: '#ffc182', 7: '#f5ae73', 8: '#ec9455', 9: '#f76b15', 10: '#ef5f00', 11: '#cc4e00', 12: '#582d1d' },
+        amber: { 1: '#fefdfb', 2: '#fefbe9', 3: '#fff7c2', 4: '#ffee9c', 5: '#fbe577', 6: '#f3d673', 7: '#e9c162', 8: '#e2a336', 9: '#ffc53d', 10: '#ffba18', 11: '#ab6400', 12: '#4f3422' },
+        yellow: { 1: '#fdfdf9', 2: '#fefce9', 3: '#fffab8', 4: '#fff394', 5: '#ffe770', 6: '#f3d768', 7: '#e4c767', 8: '#d5ae39', 9: '#ffe629', 10: '#ffdc00', 11: '#9e6c00', 12: '#473b1f' },
+        green: { 1: '#fbfefc', 2: '#f4fbf6', 3: '#e6f6eb', 4: '#d6f1df', 5: '#c4e8d1', 6: '#adddc0', 7: '#8eceaa', 8: '#5bb98b', 9: '#30a46c', 10: '#2b9a66', 11: '#218358', 12: '#193b2d' },
+        teal: { 1: '#fafefd', 2: '#f3fbf9', 3: '#e0f8f3', 4: '#ccf3ea', 5: '#b8eae0', 6: '#a1ded2', 7: '#83cdc1', 8: '#53b9ab', 9: '#12a594', 10: '#0d9b8a', 11: '#008573', 12: '#0d3d38' },
+        cyan: { 1: '#fafdfe', 2: '#f2fafb', 3: '#def7f9', 4: '#caf1f6', 5: '#b5e9f0', 6: '#9ddde7', 7: '#7dcedc', 8: '#3db9cf', 9: '#00a2c7', 10: '#0797b9', 11: '#107d98', 12: '#0d3c48' },
+        blue: { 1: '#fbfdff', 2: '#f4faff', 3: '#e6f4fe', 4: '#d5efff', 5: '#c2e5ff', 6: '#acd8fc', 7: '#8ec8f6', 8: '#5eb1ef', 9: '#0090ff', 10: '#0588f0', 11: '#0d74ce', 12: '#113264' },
+        indigo: { 1: '#fdfdfe', 2: '#f7f9ff', 3: '#edf2fe', 4: '#e1e9ff', 5: '#d2deff', 6: '#c1d0ff', 7: '#abbdf9', 8: '#8da4ef', 9: '#3e63dd', 10: '#3358d4', 11: '#3a5bc7', 12: '#1f2d5c' },
+        violet: { 1: '#fdfcfe', 2: '#faf8ff', 3: '#f4f0fe', 4: '#ebe4ff', 5: '#e1d9ff', 6: '#d4cafe', 7: '#c2b5f5', 8: '#aa99ec', 9: '#6e56cf', 10: '#654dc4', 11: '#6550b9', 12: '#2f265f' },
+        pink: { 1: '#fffcfe', 2: '#fef7fb', 3: '#fee9f5', 4: '#fbdcef', 5: '#f6cee7', 6: '#efbfdd', 7: '#e7acd0', 8: '#dd93c2', 9: '#d6409f', 10: '#cf3897', 11: '#c2298a', 12: '#651249' }
+      };
+
+      const code = `(async () => {
+const colors = ${JSON.stringify(radixColors)};
+
+function hexToRgb(hex) {
+  const r = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex);
+  return r ? { r: parseInt(r[1], 16) / 255, g: parseInt(r[2], 16) / 255, b: parseInt(r[3], 16) / 255 } : null;
+}
+
+const cols = await figma.variables.getLocalVariableCollectionsAsync();
+let col = cols.find(c => c.name === 'radix/colors');
+if (!col) col = figma.variables.createVariableCollection('radix/colors');
+const modeId = col.modes[0].modeId;
+
+const existingVars = await figma.variables.getLocalVariablesAsync('COLOR');
+let count = 0;
+
+for (const [colorName, steps] of Object.entries(colors)) {
+  for (const [step, hex] of Object.entries(steps)) {
+    const varName = colorName + '/' + step;
+    let v = existingVars.find(ev => ev.name === varName && ev.variableCollectionId === col.id);
+    if (!v) {
+      v = figma.variables.createVariable(varName, col, 'COLOR');
+      v.setValueForMode(modeId, hexToRgb(hex));
+      count++;
+    }
+  }
+}
+
+return 'Created ' + count + ' Radix color variables';
+})()`;
+
+      try {
+        const result = await fastEval(code);
+        spinner.succeed(result || 'Added Radix UI colors');
+        console.log(chalk.gray('\n  Collection created:'));
+        console.log(chalk.gray('    • radix/colors - 156 colors (13 families × 12 steps)\n'));
+        console.log(chalk.gray('  Colors: gray, slate, red, orange, amber, yellow,'));
+        console.log(chalk.gray('          green, teal, cyan, blue, indigo, violet, pink'));
+      } catch (error) {
+        spinner.fail('Failed to add Radix colors');
+        console.error(chalk.red(error.message));
+      }
+
     } else if (presetLower === 'material') {
       console.log(chalk.yellow('Material Design preset coming soon!'));
-      console.log(chalk.gray('Available now: shadcn'));
+      console.log(chalk.gray('Available now: shadcn, radix'));
 
     } else {
       console.log(chalk.red(`Unknown preset: ${preset}`));
-      console.log(chalk.gray('Available presets: shadcn, material (coming soon)'));
+      console.log(chalk.gray('Available presets: shadcn, radix, material (coming soon)'));
     }
   });
 
