@@ -89,7 +89,7 @@ Then:
 Initiate project
 ```
 
-Claude handles everything. You just follow the Figma steps:
+Claude asks which connection mode, choose **Safe Mode (Recommended)**, then follow the Figma steps:
 1. Open Figma Desktop
 2. **Plugins → Development → Import plugin from manifest**
 3. Select `plugin/manifest.json` from the figma-cli folder
