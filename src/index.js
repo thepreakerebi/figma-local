@@ -12,7 +12,7 @@ import { homedir, platform } from 'os';
 import { createServer } from 'http';
 import { FigJamClient } from './figjam-client.js';
 import { FigmaClient } from './figma-client.js';
-import { isPatched, patchFigma, unpatchFigma, getFigmaCommand } from './figma-patch.js';
+import { isPatched, patchFigma, unpatchFigma, getFigmaCommand, generateRandomPort, saveCdpPort, getCdpPort, clearCdpPort } from './figma-patch.js';
 
 // Daemon configuration
 const DAEMON_PORT = 3456;
@@ -184,13 +184,17 @@ function getFigmaPath() {
 }
 
 function startFigma() {
+  // Generate and save a random port for security (binds to localhost only)
+  const port = generateRandomPort();
+  saveCdpPort(port);
+
   const figmaPath = getFigmaPath();
   if (IS_MAC) {
-    execSync('open -a Figma --args --remote-debugging-port=9222', { stdio: 'pipe' });
+    execSync(`open -a Figma --args --remote-debugging-port=${port}`, { stdio: 'pipe' });
   } else if (IS_WINDOWS) {
-    spawn(figmaPath, ['--remote-debugging-port=9222'], { detached: true, stdio: 'ignore' }).unref();
+    spawn(figmaPath, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore' }).unref();
   } else {
-    spawn(figmaPath, ['--remote-debugging-port=9222'], { detached: true, stdio: 'ignore' }).unref();
+    spawn(figmaPath, [`--remote-debugging-port=${port}`], { detached: true, stdio: 'ignore' }).unref();
   }
 }
 
@@ -209,12 +213,13 @@ function killFigma() {
 }
 
 function getManualStartCommand() {
+  const port = getCdpPort();
   if (IS_MAC) {
-    return 'open -a Figma --args --remote-debugging-port=9222';
+    return `open -a Figma --args --remote-debugging-port=${port}`;
   } else if (IS_WINDOWS) {
-    return '"%LOCALAPPDATA%\\Figma\\Figma.exe" --remote-debugging-port=9222';
+    return `"%LOCALAPPDATA%\\Figma\\Figma.exe" --remote-debugging-port=${port}`;
   } else {
-    return 'figma --remote-debugging-port=9222';
+    return `figma --remote-debugging-port=${port}`;
   }
 }
 
@@ -366,7 +371,8 @@ function figmaUse(args, options = {}) {
 
   if (args === 'status' || args.startsWith('status')) {
     try {
-      const result = execSync('curl -s http://localhost:9222/json', { encoding: 'utf8', stdio: 'pipe' });
+      const port = getCdpPort();
+      const result = execSync(`curl -s http://localhost:${port}/json`, { encoding: 'utf8', stdio: 'pipe' });
       const pages = JSON.parse(result);
       const figmaPage = pages.find(p => p.url?.includes('figma.com/design') || p.url?.includes('figma.com/file'));
       if (figmaPage) {
@@ -472,7 +478,8 @@ function checkConnectionSync() {
 
   // Fallback: check CDP directly
   try {
-    execSync('curl -s http://localhost:9222/json > /dev/null', { stdio: 'pipe', timeout: 2000 });
+    const port = getCdpPort();
+    execSync(`curl -s http://localhost:${port}/json > /dev/null`, { stdio: 'pipe', timeout: 2000 });
     return true;
   } catch {
     console.log(chalk.red('\n✗ Not connected to Figma\n'));

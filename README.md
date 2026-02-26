@@ -167,10 +167,12 @@ node src/index.js connect --safe
 - Needs Full Disk Access on macOS
 - Modifies Figma app files
 
+**Security:** Uses a random port (9222-9322) for each session, bound to localhost only.
+
 ```
 ┌─────────────┐      WebSocket (CDP)      ┌─────────────┐
 │     CLI     │ ◄───────────────────────► │   Figma     │
-└─────────────┘      localhost:9222       └─────────────┘
+└─────────────┘    localhost:random port  └─────────────┘
 ```
 
 ```bash

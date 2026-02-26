@@ -115,6 +115,7 @@ node src/index.js connect --safe
 
 **Pros:** Fully automatic, no manual steps after setup
 **Cons:** Needs Full Disk Access on macOS, modifies Figma app
+**Security:** Uses random port (9222-9322) per session, localhost only
 
 ```bash
 node src/index.js connect

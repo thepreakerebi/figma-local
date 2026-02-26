@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws';
+import { getCdpPort } from './figma-patch.js';
 
 export class FigJamClient {
   constructor() {
@@ -21,7 +22,8 @@ export class FigJamClient {
    * List all available FigJam pages
    */
   static async listPages() {
-    const response = await fetch('http://localhost:9222/json');
+    const port = getCdpPort();
+    const response = await fetch(`http://localhost:${port}/json`);
     const pages = await response.json();
     return pages
       .filter(p => p.title.includes('FigJam'))
@@ -32,7 +34,8 @@ export class FigJamClient {
    * Connect to a FigJam page by title (partial match)
    */
   async connect(pageTitle) {
-    const response = await fetch('http://localhost:9222/json');
+    const port = getCdpPort();
+    const response = await fetch(`http://localhost:${port}/json`);
     const pages = await response.json();
     const page = pages.find(p => p.title.includes(pageTitle) && p.title.includes('FigJam'));
 

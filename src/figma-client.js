@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws';
+import { getCdpPort } from './figma-patch.js';
 
 export class FigmaClient {
   constructor() {
@@ -20,7 +21,8 @@ export class FigmaClient {
    * List all available Figma pages
    */
   static async listPages() {
-    const response = await fetch('http://localhost:9222/json');
+    const port = getCdpPort();
+    const response = await fetch(`http://localhost:${port}/json`);
     const pages = await response.json();
     return pages
       .filter(p => p.url && p.url.includes('figma.com'))
@@ -32,7 +34,8 @@ export class FigmaClient {
    */
   static async isConnected() {
     try {
-      const response = await fetch('http://localhost:9222/json');
+      const port = getCdpPort();
+      const response = await fetch(`http://localhost:${port}/json`);
       const pages = await response.json();
       return pages.some(p => p.url && p.url.includes('figma.com'));
     } catch {
@@ -44,7 +47,8 @@ export class FigmaClient {
    * Connect to a Figma design file
    */
   async connect(pageTitle = null) {
-    const response = await fetch('http://localhost:9222/json');
+    const port = getCdpPort();
+    const response = await fetch(`http://localhost:${port}/json`);
     const pages = await response.json();
 
     // Find design/file pages (not feed, home, etc.)

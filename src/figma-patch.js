@@ -5,8 +5,62 @@
  * Newer Figma versions block --remote-debugging-port by default.
  */
 
-import { readFileSync, writeFileSync, accessSync, constants } from 'fs';
+import { readFileSync, writeFileSync, accessSync, constants, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
+import { join } from 'path';
+import { homedir } from 'os';
+
+// Port config file location
+const CONFIG_DIR = join(homedir(), '.figma-cli');
+const PORT_FILE = join(CONFIG_DIR, 'cdp-port');
+
+// Default port range: 9222-9322 (100 possible ports)
+const PORT_MIN = 9222;
+const PORT_MAX = 9322;
+
+/**
+ * Generate a random CDP port
+ */
+export function generateRandomPort() {
+  return PORT_MIN + Math.floor(Math.random() * (PORT_MAX - PORT_MIN));
+}
+
+/**
+ * Save the CDP port to config file
+ */
+export function saveCdpPort(port) {
+  if (!existsSync(CONFIG_DIR)) {
+    mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+  writeFileSync(PORT_FILE, String(port));
+  return port;
+}
+
+/**
+ * Get the CDP port from config file, or default 9222
+ */
+export function getCdpPort() {
+  try {
+    if (existsSync(PORT_FILE)) {
+      const port = parseInt(readFileSync(PORT_FILE, 'utf8').trim(), 10);
+      if (port >= PORT_MIN && port <= PORT_MAX) {
+        return port;
+      }
+    }
+  } catch {}
+  return 9222; // Fallback to default
+}
+
+/**
+ * Clear the saved CDP port (on disconnect/cleanup)
+ */
+export function clearCdpPort() {
+  try {
+    if (existsSync(PORT_FILE)) {
+      unlinkSync(PORT_FILE);
+    }
+  } catch {}
+}
 
 // Figma app.asar locations by platform
 const ASAR_PATHS = {
@@ -190,5 +244,9 @@ export default {
   patchFigma,
   unpatchFigma,
   getFigmaCommand,
-  getFigmaBinaryPath
+  getFigmaBinaryPath,
+  generateRandomPort,
+  saveCdpPort,
+  getCdpPort,
+  clearCdpPort
 };
