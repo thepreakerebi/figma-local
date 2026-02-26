@@ -37,16 +37,6 @@ A CLI that connects directly to Figma Desktop and gives you complete control:
 
 ## Why This CLI?
 
-Other tools require MCP servers, API keys, or complex setup. This one doesn't.
-
-| | figma-ds-cli | MCP-based tools |
-|---|---|---|
-| **API Key** | Not needed | Personal Access Token or OAuth |
-| **MCP Setup** | Not needed | Configure server + client |
-| **AI Knowledge** | `CLAUDE.md` included | Teach AI manually |
-
-### The CLAUDE.md Advantage
-
 This project includes a `CLAUDE.md` file that Claude reads automatically. It contains:
 
 - All available commands and their syntax
