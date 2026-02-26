@@ -65,6 +65,7 @@ No explaining. No teaching. Just ask.
 
 - **Figma Desktop** (free account works)
 - **Claude Code** ([get it here](https://www.anthropic.com/claude-code))
+- **Node.js** (v18 or later)
 
 ---
 
