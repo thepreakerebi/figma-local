@@ -665,14 +665,12 @@ program.action(async () => {
 });
 
 function showQuickStart() {
-  console.log(chalk.white('  Quick start:\n'));
-  console.log(chalk.gray('    Add shadcn colors   ') + chalk.cyan('figma-ds-cli tokens preset shadcn'));
-  console.log(chalk.gray('    Create a rectangle         ') + chalk.cyan('figma-ds-cli create rect "Card" --fill "#3b82f6"'));
-  console.log(chalk.gray('    Render JSX to Figma        ') + chalk.cyan('figma-ds-cli render \'<Frame>...</Frame>\''));
-  console.log(chalk.gray('    List all variables         ') + chalk.cyan('figma-ds-cli var list'));
-  console.log(chalk.gray('    See all commands           ') + chalk.cyan('figma-ds-cli --help'));
+  console.log(chalk.white('  Just ask Claude:\n'));
+  console.log(chalk.white('    "Add shadcn colors to my project"'));
+  console.log(chalk.white('    "Create a blue card with rounded corners"'));
+  console.log(chalk.white('    "Show me what\'s on the canvas"'));
+  console.log(chalk.white('    "Export this frame as PNG"'));
   console.log();
-  console.log(chalk.gray('  Or just ask Claude: ') + chalk.white('"Add shadcn colors to my project"'));
   console.log(chalk.gray('  Learn more: ') + chalk.cyan('https://intodesignsystems.com\n'));
 }
 
@@ -780,13 +778,12 @@ program
     // Done!
     console.log(chalk.green('\n  ✓ Setup complete!\n'));
 
-    console.log(chalk.white('  Quick start:\n'));
-    console.log(chalk.gray('    Add shadcn colors  ') + chalk.cyan('figma-ds-cli tokens preset shadcn'));
-    console.log(chalk.gray('    Create a rectangle        ') + chalk.cyan('figma-ds-cli create rect "Card" --fill "#3b82f6"'));
-    console.log(chalk.gray('    Render JSX to Figma       ') + chalk.cyan('figma-ds-cli render \'<Frame>...</Frame>\''));
-    console.log(chalk.gray('    See all commands          ') + chalk.cyan('figma-ds-cli --help'));
+    console.log(chalk.white('  Just ask Claude:\n'));
+    console.log(chalk.white('    "Add shadcn colors to my project"'));
+    console.log(chalk.white('    "Create a blue card with rounded corners"'));
+    console.log(chalk.white('    "Show me what\'s on the canvas"'));
+    console.log(chalk.white('    "Export this frame as PNG"'));
     console.log();
-    console.log(chalk.gray('  Or just ask Claude: ') + chalk.white('"Add shadcn colors to my project"'));
     console.log(chalk.gray('  Learn more: ') + chalk.cyan('https://intodesignsystems.com\n'));
   });
 
