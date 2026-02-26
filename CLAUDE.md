@@ -2,6 +2,23 @@
 
 CLI that controls Figma Desktop directly. No API key needed.
 
+## Quick Reference (check here first!)
+
+| User says | Command |
+|-----------|---------|
+| "connect to figma" | `node src/index.js connect` |
+| "add shadcn/tailwind colors" | `node src/index.js tokens tailwind` |
+| "show colors on canvas" / "display variables" | `node src/index.js var visualize` |
+| "create a rectangle/frame/text" | `node src/index.js render '<Frame>...'` |
+| "list variables" | `node src/index.js var list` |
+| "find nodes named X" | `node src/index.js find "X"` |
+| "what's on canvas" | `node src/index.js canvas info` |
+| "export as PNG/SVG" | `node src/index.js export png` / `export svg` |
+
+**IMPORTANT:** Don't guess commands. Check this table or search this file first.
+
+---
+
 ## IMPORTANT: Creating a Full Webpage in Figma
 
 When user asks to "create a website", "design a landing page", or similar:
