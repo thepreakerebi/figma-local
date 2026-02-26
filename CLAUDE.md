@@ -432,12 +432,12 @@ node src/index.js bind list -t COLOR
 node src/index.js bind list -t FLOAT
 ```
 
-"Display color palette on canvas" or "Visualize variables"
+"Display on canvas" / "Show colors" / "Visualize" / "Create palette" / "Show swatches"
 ```bash
 node src/index.js var visualize
 node src/index.js var visualize "primitives"  # Specific collection
 ```
-Creates a beautiful shadcn-style color palette on canvas with all color variables grouped by family (slate, gray, blue, etc.). Each swatch is bound to its variable.
+**IMPORTANT:** Use this command whenever user wants to see colors/variables visually on canvas. Creates shadcn-style palette with swatches bound to variables. Never write custom code for this.
 
 ### Sizing Control (Auto-Layout)
 
@@ -661,10 +661,11 @@ node src/index.js tokens spacing
 node src/index.js var list
 ```
 
-"Display variables on canvas" / "Show color palette" / "Visualize colors"
+"Display on canvas" / "Show colors on canvas" / "Visualize variables" / "Create color palette" / "Show me the colors" / "Display color swatches"
 ```bash
 node src/index.js var visualize
 ```
+**IMPORTANT:** Always use this command when user wants to see colors/variables on canvas. Never write custom code for this.
 
 "Create a color variable"
 ```bash
