@@ -129,42 +129,68 @@ node src/index.js connect --safe
 
 ## IMPORTANT: When User Says "Initiate Project"
 
-Run these steps:
-
 ### Step 1: Install dependencies
 ```bash
 npm install
 ```
 
-### Step 2: Connect to Figma (try Yolo Mode first)
+### Step 2: Ask which connection mode
+
+**Use AskUserQuestion tool to ask:**
+
+Question: "Which connection mode do you want to use?"
+
+Options:
+1. **Yolo Mode (Recommended)** - Automatic, patches Figma once, needs Full Disk Access on Mac
+2. **Safe Mode** - No patching, works everywhere, requires manual plugin start
+
+### Step 3a: If user chooses Yolo Mode
+
 ```bash
 node src/index.js connect
 ```
 
-### If permission error appears:
+This command:
+- Patches Figma if needed (first time only)
+- Closes and restarts Figma with debug port enabled
+- Connects automatically
 
-Tell user:
+**If permission error appears**, tell user:
 ```
-Permission error! Two options:
-
-Option A: Grant Full Disk Access (recommended for personal Mac)
+Permission error! Grant Full Disk Access:
 1. System Settings → Privacy & Security → Full Disk Access
 2. Add Terminal (or your terminal app)
-3. Restart Terminal and try again
+3. Restart Terminal completely (Cmd+Q, reopen)
+4. Try again
 
-Option B: Use Safe Mode (no patching needed)
-Run: node src/index.js connect --safe
-Then start the plugin in Figma (see instructions in terminal)
+Or switch to Safe Mode if you can't grant permissions.
 ```
 
-This command does everything automatically:
-- Patches Figma if needed (first time only)
-- Closes Figma if running
-- Restarts Figma with debug port enabled
+### Step 3b: If user chooses Safe Mode
 
-If permission error → user needs Full Disk Access (see below).
+```bash
+node src/index.js connect --safe
+```
 
-### Step 3: Show examples
+Then tell user:
+```
+Safe Mode started! Now set up the plugin in Figma:
+
+ONE-TIME SETUP:
+1. Open Figma Desktop
+2. Go to: Plugins → Development → Import plugin from manifest
+3. Navigate to this folder and select: plugin/manifest.json
+4. Click "Open"
+
+EACH SESSION:
+1. In Figma: Plugins → Development → FigCli
+2. A small window appears (keep it open)
+3. Terminal shows "Plugin connected!"
+
+TIP: Right-click the plugin → "Add to toolbar" for quick access
+```
+
+### Step 4: Show examples
 When connected, show:
 ```
 Ready! Try asking:
