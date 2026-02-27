@@ -1,0 +1,240 @@
+#!/bin/bash
+
+# fig-start — Launch Figma CLI + Claude Code
+# Connects to Figma, lets you pick an open file, then launches Claude Code.
+#
+# Usage:
+#   fig-start          → interactive file selector
+#   fig-start --setup  → set/change the figma-cli repo path
+
+CONFIG_DIR="$HOME/.figma-cli"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# ── Config helpers ──
+
+get_repo_path() {
+    if [ -f "$CONFIG_FILE" ]; then
+        python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('repoPath',''))" 2>/dev/null
+    fi
+}
+
+save_repo_path() {
+    mkdir -p "$CONFIG_DIR"
+    python3 -c "
+import json, os
+path = '$CONFIG_FILE'
+cfg = {}
+if os.path.exists(path):
+    with open(path) as f: cfg = json.load(f)
+cfg['repoPath'] = '$1'
+with open(path, 'w') as f: json.dump(cfg, f, indent=2)
+"
+}
+
+# ── Arrow-key selector (same UX as fancoolo-start) ──
+
+select_file() {
+    local options=("$@")
+    local count=${#options[@]}
+    local selected=0
+
+    tput civis > /dev/tty 2>/dev/null
+    trap 'tput cnorm > /dev/tty 2>/dev/null' EXIT
+
+    draw_menu() {
+        if [ "$1" = "redraw" ]; then
+            printf "\033[%dA" "$((count + 2))" > /dev/tty
+        fi
+
+        printf "${BOLD}Select a Figma file (↑↓ arrows, Enter to confirm):${NC}\n" > /dev/tty
+        printf "\n" > /dev/tty
+        for i in "${!options[@]}"; do
+            if [ "$i" -eq "$selected" ]; then
+                printf "  ${GREEN}▸ %s${NC}\n" "${options[$i]}" > /dev/tty
+            else
+                printf "    %s\n" "${options[$i]}" > /dev/tty
+            fi
+        done
+    }
+
+    draw_menu "first"
+
+    while true; do
+        IFS= read -rsn1 key < /dev/tty
+
+        case "$key" in
+            $'\x1b')
+                read -rsn2 seq < /dev/tty
+                case "$seq" in
+                    '[A')
+                        ((selected--))
+                        [ "$selected" -lt 0 ] && selected=$((count - 1))
+                        ;;
+                    '[B')
+                        ((selected++))
+                        [ "$selected" -ge "$count" ] && selected=0
+                        ;;
+                esac
+                ;;
+            ''|$'\n'|$'\r')
+                tput cnorm > /dev/tty 2>/dev/null
+                printf "\n" > /dev/tty
+                printf '%s' "${options[$selected]}"
+                return
+                ;;
+            'q')
+                tput cnorm > /dev/tty 2>/dev/null
+                printf "\n" > /dev/tty
+                return
+                ;;
+        esac
+
+        draw_menu "redraw"
+    done
+}
+
+# ── Main ──
+
+# Handle --setup flag
+if [ "$1" = "--setup" ]; then
+    printf "${BOLD}Enter the path to your figma-cli repo:${NC} "
+    read -r repo_path < /dev/tty
+    repo_path="${repo_path/#\~/$HOME}"
+    if [ ! -f "$repo_path/src/index.js" ]; then
+        echo -e "${RED}Not a valid figma-cli repo:${NC} $repo_path"
+        exit 1
+    fi
+    save_repo_path "$repo_path"
+    echo -e "${GREEN}Saved.${NC} Run ${BOLD}fig-start${NC} to begin."
+    exit 0
+fi
+
+# Resolve repo path
+REPO_PATH=$(get_repo_path)
+
+if [ -z "$REPO_PATH" ] || [ ! -d "$REPO_PATH" ]; then
+    # Try to find it relative to this script
+    SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    if [ -f "$SCRIPT_DIR/src/index.js" ]; then
+        REPO_PATH="$SCRIPT_DIR"
+        save_repo_path "$REPO_PATH"
+    else
+        echo -e "${YELLOW}figma-cli repo not configured.${NC}"
+        printf "${BOLD}Enter the path to your figma-cli repo:${NC} "
+        read -r REPO_PATH < /dev/tty
+        REPO_PATH="${REPO_PATH/#\~/$HOME}"
+        if [ ! -f "$REPO_PATH/src/index.js" ]; then
+            echo -e "${RED}Not a valid figma-cli repo:${NC} $REPO_PATH"
+            exit 1
+        fi
+        save_repo_path "$REPO_PATH"
+    fi
+fi
+
+CLI="$REPO_PATH/src/index.js"
+
+echo ""
+echo -e "${BOLD}  fig-start${NC} ${DIM}— Figma CLI launcher${NC}"
+echo ""
+
+# Step 1: Check if Figma is running, start if not
+if ! pgrep -x "Figma" > /dev/null 2>&1; then
+    echo -e "  ${YELLOW}Starting Figma...${NC}"
+    open -a Figma
+    sleep 3
+fi
+
+# Step 2: Connect to Figma
+# Check if CDP is already accessible (avoid killing/restarting Figma)
+CDP_OK=false
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:9222/json 2>/dev/null | grep -q "200"; then
+    CDP_OK=true
+fi
+
+if [ "$CDP_OK" = true ]; then
+    # Figma is already accessible — just ensure daemon is running
+    DAEMON_OK=false
+    if curl -s -o /dev/null -w "%{http_code}" http://localhost:3456/health 2>/dev/null | grep -q "200"; then
+        DAEMON_OK=true
+    fi
+    if [ "$DAEMON_OK" = false ]; then
+        echo -e "  Starting daemon..."
+        node "$CLI" daemon restart > /dev/null 2>&1
+        sleep 1
+    fi
+    echo -e "  ${GREEN}✓ Connected${NC}"
+else
+    # Not accessible — run full connect (will kill + restart Figma)
+    echo -e "  Connecting to Figma..."
+    CONNECT_OUT=$(node "$CLI" connect 2>&1)
+    if [ $? -ne 0 ]; then
+        echo -e "  ${RED}Connection failed:${NC}"
+        echo "$CONNECT_OUT"
+        exit 1
+    fi
+    echo -e "  ${GREEN}✓ Connected${NC}"
+    # Wait for Figma to fully restore all tabs after restart
+    sleep 3
+fi
+
+# Step 3: List open files and let user pick
+echo -e "  Loading open files..."
+FILES_JSON=$(node "$CLI" files 2>/dev/null)
+
+if [ -z "$FILES_JSON" ] || echo "$FILES_JSON" | grep -q '"error"'; then
+    echo -e "  ${RED}Could not list files.${NC} Is Figma open with a file?"
+    exit 1
+fi
+
+# Parse file titles
+FILE_TITLES=()
+while IFS= read -r title; do
+    FILE_TITLES+=("$title")
+done < <(echo "$FILES_JSON" | python3 -c "
+import json, sys
+files = json.load(sys.stdin)
+for f in files:
+    t = f.get('title', 'Untitled')
+    # Clean up Figma title format (remove ' – Figma' suffix)
+    t = t.replace(' – Figma', '').replace(' - Figma', '')
+    print(t)
+" 2>/dev/null)
+
+if [ ${#FILE_TITLES[@]} -eq 0 ]; then
+    echo -e "  ${YELLOW}No Figma files detected.${NC} Open a file in Figma first."
+    echo ""
+    echo -e "  Launching Claude Code anyway..."
+    echo ""
+    cd "$REPO_PATH" || exit 1
+    exec claude
+fi
+
+SELECTED_TITLE=""
+
+if [ ${#FILE_TITLES[@]} -eq 1 ]; then
+    SELECTED_TITLE="${FILE_TITLES[0]}"
+    echo -e "  ${GREEN}▸ ${SELECTED_TITLE}${NC}"
+else
+    echo ""
+    SELECTED_TITLE=$(select_file "${FILE_TITLES[@]}")
+    if [ -z "$SELECTED_TITLE" ]; then
+        echo "  Cancelled."
+        exit 0
+    fi
+fi
+
+echo -e "  ${GREEN}✓ File: ${BOLD}${SELECTED_TITLE}${NC}"
+echo ""
+
+# Step 4: Launch Claude Code from repo directory
+echo -e "  ${GREEN}Launching Claude Code...${NC}"
+echo ""
+cd "$REPO_PATH" || exit 1
+exec claude

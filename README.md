@@ -51,37 +51,54 @@ This project includes a `CLAUDE.md` file that Claude reads automatically. It con
 
 ## What You Need
 
+- **Node.js 18+** — `brew install node` (or [download](https://nodejs.org/))
 - **Figma Desktop** (free account works)
 - **Claude Code** ([get it here](https://www.anthropic.com/claude-code))
-- **Node.js** (v18 or later)
 - **macOS or Windows** (macOS recommended, Windows supported)
+- **macOS Full Disk Access** for Terminal (needed for Yolo Mode — see [Troubleshooting](#permission-error-when-patching-macos))
 
 ---
 
 ## Setup
 
-### 1. Clone & Open
-
 ```bash
 git clone https://github.com/silships/figma-cli.git
+cd figma-cli
+npm install
+npm run setup-alias
+source ~/.zshrc
+```
+
+That's it. Now open a **new terminal** and type:
+
+```bash
+fig-start
+```
+
+This will:
+1. Start Figma (if not running)
+2. Connect to Figma and start the speed daemon
+3. Show your open Figma files — pick one with arrow keys
+4. Launch Claude Code with all commands pre-loaded
+
+**Done.** Talk to Claude about your Figma file.
+
+> **Note:** `fig-start` works from any directory. The setup script saves the repo location automatically.
+
+### Alternative: Manual Setup
+
+If you prefer not to use `fig-start`:
+
+```bash
 cd figma-cli
 claude
 ```
 
-**IMPORTANT:** Start Claude Code from the figma-cli folder so it can read the instructions.
-
-### 2. Connect
-
-Just say:
-```
-Connect to Figma
-```
+Then tell Claude: `Connect to Figma`
 
 Claude asks which connection mode:
 - **Yolo Mode (Recommended)** — Fully automatic, secure random port
 - **Safe Mode** — For corporate/restricted environments
-
-Done! Now just talk to Claude about your designs.
 
 ---
 
@@ -241,6 +258,27 @@ Windows is supported but less tested than macOS.
 1. Make sure Figma Desktop is running (not the web version)
 2. Open a design file in Figma (not just the home screen)
 3. Restart connection: `node src/index.js connect`
+
+---
+
+## Updating
+
+```bash
+cd ~/path/to/figma-cli
+git pull
+npm install
+```
+
+## How It Works
+
+Connects to Figma Desktop via Chrome DevTools Protocol (CDP). No API key needed because it uses your existing Figma session.
+
+```
+┌─────────────┐      WebSocket (CDP)      ┌─────────────┐
+│ figma-ds-cli │ ◄───────────────────────► │   Figma     │
+│    (CLI)    │      localhost:9222       │  Desktop    │
+└─────────────┘                           └─────────────┘
+```
 
 ---
 

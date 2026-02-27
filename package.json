@@ -6,10 +6,12 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "figma-ds-cli": "src/index.js"
+    "figma-ds-cli": "src/index.js",
+    "fig-start": "bin/fig-start"
   },
   "files": [
-    "src"
+    "src",
+    "bin"
   ],
   "keywords": [
     "figma",
@@ -25,6 +27,9 @@
   "homepage": "https://intodesignsystems.com",
   "bugs": {
     "url": "https://github.com/silships/figma-cli/issues"
+  },
+  "scripts": {
+    "setup-alias": "bash bin/setup-alias.sh"
   },
   "engines": {
     "node": ">=18"

@@ -4992,4 +4992,22 @@ figjam
     }
   });
 
+// List open Figma design files (used by fig-start script)
+program
+  .command('files')
+  .description('List open Figma design files as JSON')
+  .action(async () => {
+    try {
+      const pages = await FigmaClient.listPages();
+      // Filter to actual design/board files only (exclude blobs, webpack, feed, tabs)
+      const designFiles = pages.filter(p =>
+        p.url && (p.url.includes('/design/') || p.url.includes('/board/'))
+      );
+      console.log(JSON.stringify(designFiles));
+    } catch (error) {
+      console.error(JSON.stringify({ error: error.message }));
+      process.exit(1);
+    }
+  });
+
 program.parse();
