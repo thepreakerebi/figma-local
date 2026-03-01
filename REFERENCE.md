@@ -48,6 +48,20 @@ node src/index.js create group "Header"
 node src/index.js create component "Button"
 ```
 
+### Create with Variable Binding (Fast)
+
+Use `var:name` syntax to bind shadcn variables at creation time:
+
+```bash
+node src/index.js create rect "Card" --fill "var:card" --stroke "var:border"
+node src/index.js create circle "Avatar" --fill "var:primary"
+node src/index.js create text "Hello" -c "var:foreground"
+node src/index.js create line -c "var:border"
+node src/index.js create frame "Section" --fill "var:background"
+node src/index.js create autolayout "Container" --fill "var:muted"
+node src/index.js create icon lucide:star -c "var:primary"
+```
+
 ### Render with JSX
 
 ```bash
@@ -56,6 +70,22 @@ node src/index.js render '<Frame name="Card" w={320} h={180} bg="#fff" rounded={
   <Text size={14} color="#666" w="fill">Description</Text>
 </Frame>'
 ```
+
+### Render with Variable Binding (Fast)
+
+Use `var:name` syntax to bind shadcn variables at creation time (no separate bind commands needed):
+
+```bash
+node src/index.js render '<Frame name="Card" w={320} h={180} bg="var:card" stroke="var:border" rounded={16} flex="col" gap={8} p={24}>
+  <Text size={20} weight="bold" color="var:foreground">Title</Text>
+  <Text size={14} color="var:muted-foreground" w="fill">Description</Text>
+  <Frame bg="var:primary" px={16} py={8} rounded={8}>
+    <Text color="var:primary-foreground">Button</Text>
+  </Frame>
+</Frame>'
+```
+
+Variables: `background`, `foreground`, `card`, `primary`, `secondary`, `muted`, `accent`, `border`, and their `-foreground` variants.
 
 ### Render Batch (Multiple Frames)
 
@@ -71,9 +101,11 @@ Options: `-d row|col` (direction), `-g <n>` (gap)
 ## Modify Elements
 
 ```bash
-node src/index.js set fill "#3b82f6"           # Change fill
+node src/index.js set fill "#3b82f6"           # Change fill (hex)
+node src/index.js set fill "var:primary"       # Bind fill to variable (fast)
 node src/index.js set fill "#3b82f6" -n "1:234" # On specific node
-node src/index.js set stroke "#e4e4e7" -w 1    # Add stroke
+node src/index.js set stroke "#e4e4e7" -w 1    # Add stroke (hex)
+node src/index.js set stroke "var:border"      # Bind stroke to variable
 node src/index.js set radius 12                # Corner radius
 node src/index.js set size 320 200             # Resize
 node src/index.js set pos 100 100              # Move

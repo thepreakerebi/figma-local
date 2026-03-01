@@ -551,6 +551,68 @@ function hexToRgb(hex) {
   };
 }
 
+// Helper: Check if value is a variable reference (var:name)
+function isVarRef(value) {
+  return typeof value === 'string' && value.startsWith('var:');
+}
+
+// Helper: Extract variable name from var:name syntax
+function getVarName(value) {
+  return value.slice(4);
+}
+
+// Helper: Generate fill code (hex or variable binding)
+function generateFillCode(color, nodeVar = 'node', property = 'fills') {
+  if (isVarRef(color)) {
+    const varName = getVarName(color);
+    return {
+      code: `${nodeVar}.${property} = [boundFill(vars['${varName}'])];`,
+      usesVars: true
+    };
+  }
+  const { r, g, b } = hexToRgb(color);
+  return {
+    code: `${nodeVar}.${property} = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }];`,
+    usesVars: false
+  };
+}
+
+// Helper: Generate stroke code (hex or variable binding)
+function generateStrokeCode(color, nodeVar = 'node', weight = 1) {
+  if (isVarRef(color)) {
+    const varName = getVarName(color);
+    return {
+      code: `${nodeVar}.strokes = [boundFill(vars['${varName}'])]; ${nodeVar}.strokeWeight = ${weight};`,
+      usesVars: true
+    };
+  }
+  const { r, g, b } = hexToRgb(color);
+  return {
+    code: `${nodeVar}.strokes = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }]; ${nodeVar}.strokeWeight = ${weight};`,
+    usesVars: false
+  };
+}
+
+// Helper: Variable loading code for shadcn collection
+function varLoadingCode() {
+  return `
+const collections = await figma.variables.getLocalVariableCollectionsAsync();
+const vars = {};
+// Load variables from shadcn collections (shadcn/semantic and shadcn/primitives)
+for (const col of collections) {
+  if (col.name.startsWith('shadcn')) {
+    for (const id of col.variableIds) {
+      const v = await figma.variables.getVariableByIdAsync(id);
+      if (v) vars[v.name] = v;
+    }
+  }
+}
+const boundFill = (variable) => figma.variables.setBoundVariableForPaint(
+  { type: 'SOLID', color: { r: 0.5, g: 0.5, b: 0.5 } }, 'color', variable
+);
+`;
+}
+
 // Helper: Smart positioning code (returns JS to get next free X position)
 function smartPosCode(gap = 100) {
   return `
@@ -2628,42 +2690,41 @@ create
   .option('-h, --height <n>', 'Height', '100')
   .option('-x <n>', 'X position')
   .option('-y <n>', 'Y position', '0')
-  .option('--fill <color>', 'Fill color')
+  .option('--fill <color>', 'Fill color (hex or var:name)')
   .option('--radius <n>', 'Corner radius')
   .option('--smart', 'Auto-position to avoid overlaps (default if no -x)')
   .option('-g, --gap <n>', 'Gap for smart positioning', '100')
-  .action((name, options) => {
+  .action(async (name, options) => {
     checkConnection();
-    // Smart positioning: if no X specified, auto-position
     const useSmartPos = options.smart || options.x === undefined;
-    if (useSmartPos) {
-      const { r, g, b } = options.fill ? hexToRgb(options.fill) : { r: 1, g: 1, b: 1 };
-      let code = `
-${smartPosCode(options.gap)}
+    const usesVars = options.fill && isVarRef(options.fill);
+
+    const fillCode = options.fill ? generateFillCode(options.fill, 'frame') : null;
+
+    let code = `
+(async () => {
+${usesVars ? varLoadingCode() : ''}
+${useSmartPos ? smartPosCode(options.gap) : `const smartX = ${options.x};`}
 const frame = figma.createFrame();
 frame.name = '${name}';
 frame.x = smartX;
 frame.y = ${options.y};
 frame.resize(${options.width}, ${options.height});
-${options.fill ? `frame.fills = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }];` : ''}
+${fillCode ? fillCode.code : ''}
 ${options.radius ? `frame.cornerRadius = ${options.radius};` : ''}
 figma.currentPage.selection = [frame];
-'${name} created at (' + smartX + ', ${options.y})'
+return '${name} created at (' + smartX + ', ${options.y})';
+})()
 `;
-      figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
-    } else {
-      let cmd = `create frame --name "${name}" --x ${options.x} --y ${options.y} --width ${options.width} --height ${options.height}`;
-      if (options.fill) cmd += ` --fill "${options.fill}"`;
-      if (options.radius) cmd += ` --radius ${options.radius}`;
-      figmaUse(cmd);
-    }
+    const result = await daemonExec('eval', { code });
+    console.log(result);
   });
 
 create
   .command('icon <name>')
   .description('Create an icon from Iconify (e.g., lucide:star, mdi:home) - auto-positions')
   .option('-s, --size <n>', 'Size', '24')
-  .option('-c, --color <color>', 'Color', '#000000')
+  .option('-c, --color <color>', 'Color (hex or var:name)', '#000000')
   .option('-x <n>', 'X position (auto if not set)')
   .option('-y <n>', 'Y position', '0')
   .option('--spacing <n>', 'Gap from other elements', '100')
@@ -2675,10 +2736,11 @@ create
       // Parse icon name (prefix:name format)
       const [prefix, iconName] = name.includes(':') ? name.split(':') : ['lucide', name];
 
-      // Fetch SVG from Iconify API
+      // Fetch SVG from Iconify API (use black for var: refs, actual color otherwise)
       const size = parseInt(options.size) || 24;
-      const color = options.color || '#000000';
-      const url = `https://api.iconify.design/${prefix}/${iconName}.svg?width=${size}&height=${size}&color=${encodeURIComponent(color)}`;
+      const usesVar = isVarRef(options.color);
+      const fetchColor = usesVar ? '#000000' : (options.color || '#000000');
+      const url = `https://api.iconify.design/${prefix}/${iconName}.svg?width=${size}&height=${size}&color=${encodeURIComponent(fetchColor)}`;
 
       const response = await fetch(url);
       if (!response.ok) {
@@ -2697,8 +2759,13 @@ create
       const posY = parseInt(options.y) || 0;
       const spacing = parseInt(options.spacing) || 100;
 
+      // If using var: syntax, we need to bind after creation
+      const varName = usesVar ? getVarName(options.color) : null;
+
       const code = `
 (async () => {
+  ${usesVar ? varLoadingCode() : ''}
+
   // Smart positioning
   let x = ${posX};
   if (x === null) {
@@ -2716,16 +2783,23 @@ create
   node.y = ${posY};
 
   // Flatten to vector for cleaner result
+  let finalNode = node;
   if (node.type === 'FRAME' && node.children.length > 0) {
-    const flattened = figma.flatten([node]);
-    flattened.name = "${name}";
-    return { id: flattened.id, x: flattened.x, y: flattened.y, width: flattened.width, height: flattened.height };
+    finalNode = figma.flatten([node]);
+    finalNode.name = "${name}";
   }
 
-  return { id: node.id, x: node.x, y: node.y, width: node.width, height: node.height };
+  ${usesVar ? `
+  // Bind variable to fills
+  if ('fills' in finalNode && vars['${varName}']) {
+    finalNode.fills = [boundFill(vars['${varName}'])];
+  }
+  ` : ''}
+
+  return { id: finalNode.id, x: finalNode.x, y: finalNode.y, width: finalNode.width, height: finalNode.height };
 })()`;
 
-      const result = await fastEval(code);
+      const result = await daemonExec('eval', { code });
       spinner.succeed(`Created icon: ${name}`);
       console.log(chalk.gray(`  Position: (${result.x}, ${result.y}), Size: ${result.width}x${result.height}px`));
     } catch (error) {
@@ -3501,30 +3575,38 @@ create
   .option('-h, --height <n>', 'Height', '100')
   .option('-x <n>', 'X position (auto if not set)')
   .option('-y <n>', 'Y position', '0')
-  .option('--fill <color>', 'Fill color', '#D9D9D9')
-  .option('--stroke <color>', 'Stroke color')
+  .option('--fill <color>', 'Fill color (hex or var:name)', '#D9D9D9')
+  .option('--stroke <color>', 'Stroke color (hex or var:name)')
   .option('--radius <n>', 'Corner radius')
   .option('--opacity <n>', 'Opacity 0-1')
-  .action((name, options) => {
+  .action(async (name, options) => {
     checkConnection();
     const rectName = name || 'Rectangle';
-    const { r, g, b } = hexToRgb(options.fill);
     const useSmartPos = options.x === undefined;
+    const usesVars = isVarRef(options.fill) || (options.stroke && isVarRef(options.stroke));
+
+    const fillCode = generateFillCode(options.fill, 'rect');
+    const strokeCode = options.stroke ? generateStrokeCode(options.stroke, 'rect') : null;
+
     let code = `
+(async () => {
+${usesVars ? varLoadingCode() : ''}
 ${useSmartPos ? smartPosCode(100) : `const smartX = ${options.x};`}
 const rect = figma.createRectangle();
 rect.name = '${rectName}';
 rect.x = smartX;
 rect.y = ${options.y};
 rect.resize(${options.width}, ${options.height});
-rect.fills = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }];
+${fillCode.code}
 ${options.radius ? `rect.cornerRadius = ${options.radius};` : ''}
 ${options.opacity ? `rect.opacity = ${options.opacity};` : ''}
-${options.stroke ? `rect.strokes = [{ type: 'SOLID', color: { r: ${hexToRgb(options.stroke).r}, g: ${hexToRgb(options.stroke).g}, b: ${hexToRgb(options.stroke).b} } }]; rect.strokeWeight = 1;` : ''}
+${strokeCode ? strokeCode.code : ''}
 figma.currentPage.selection = [rect];
-'${rectName} created at (' + smartX + ', ${options.y})'
+return '${rectName} created at (' + smartX + ', ${options.y})';
+})()
 `;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    const result = await daemonExec('eval', { code });
+    console.log(result);
   });
 
 create
@@ -3535,27 +3617,35 @@ create
   .option('-h, --height <n>', 'Height (same as width for circle)')
   .option('-x <n>', 'X position (auto if not set)')
   .option('-y <n>', 'Y position', '0')
-  .option('--fill <color>', 'Fill color', '#D9D9D9')
-  .option('--stroke <color>', 'Stroke color')
-  .action((name, options) => {
+  .option('--fill <color>', 'Fill color (hex or var:name)', '#D9D9D9')
+  .option('--stroke <color>', 'Stroke color (hex or var:name)')
+  .action(async (name, options) => {
     checkConnection();
     const ellipseName = name || 'Ellipse';
     const height = options.height || options.width;
-    const { r, g, b } = hexToRgb(options.fill);
     const useSmartPos = options.x === undefined;
+    const usesVars = isVarRef(options.fill) || (options.stroke && isVarRef(options.stroke));
+
+    const fillCode = generateFillCode(options.fill, 'ellipse');
+    const strokeCode = options.stroke ? generateStrokeCode(options.stroke, 'ellipse') : null;
+
     let code = `
+(async () => {
+${usesVars ? varLoadingCode() : ''}
 ${useSmartPos ? smartPosCode(100) : `const smartX = ${options.x};`}
 const ellipse = figma.createEllipse();
 ellipse.name = '${ellipseName}';
 ellipse.x = smartX;
 ellipse.y = ${options.y};
 ellipse.resize(${options.width}, ${height});
-ellipse.fills = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }];
-${options.stroke ? `ellipse.strokes = [{ type: 'SOLID', color: { r: ${hexToRgb(options.stroke).r}, g: ${hexToRgb(options.stroke).g}, b: ${hexToRgb(options.stroke).b} } }]; ellipse.strokeWeight = 1;` : ''}
+${fillCode.code}
+${strokeCode ? strokeCode.code : ''}
 figma.currentPage.selection = [ellipse];
-'${ellipseName} created at (' + smartX + ', ${options.y})'
+return '${ellipseName} created at (' + smartX + ', ${options.y})';
+})()
 `;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    const result = await daemonExec('eval', { code });
+    console.log(result);
   });
 
 create
@@ -3564,26 +3654,30 @@ create
   .option('-x <n>', 'X position (auto if not set)')
   .option('-y <n>', 'Y position', '0')
   .option('-s, --size <n>', 'Font size', '16')
-  .option('-c, --color <color>', 'Text color', '#000000')
+  .option('-c, --color <color>', 'Text color (hex or var:name)', '#000000')
   .option('-w, --weight <weight>', 'Font weight: regular, medium, semibold, bold', 'regular')
   .option('--font <family>', 'Font family', 'Inter')
   .option('--width <n>', 'Text box width (auto-width if not set)')
   .option('--spacing <n>', 'Gap from other elements', '100')
-  .action((content, options) => {
+  .action(async (content, options) => {
     checkConnection();
-    const { r, g, b } = hexToRgb(options.color);
     const weightMap = { regular: 'Regular', medium: 'Medium', semibold: 'Semi Bold', bold: 'Bold' };
     const fontStyle = weightMap[options.weight.toLowerCase()] || 'Regular';
     const useSmartPos = options.x === undefined;
+    const usesVars = isVarRef(options.color);
+
+    const fillCode = generateFillCode(options.color, 'text');
+
     let code = `
 (async function() {
+  ${usesVars ? varLoadingCode() : ''}
   ${useSmartPos ? smartPosCode(options.spacing) : `const smartX = ${options.x};`}
   await figma.loadFontAsync({ family: '${options.font}', style: '${fontStyle}' });
   const text = figma.createText();
   text.fontName = { family: '${options.font}', style: '${fontStyle}' };
   text.characters = '${content.replace(/'/g, "\\'")}';
   text.fontSize = ${options.size};
-  text.fills = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }];
+  ${fillCode.code}
   text.x = smartX;
   text.y = ${options.y};
   ${options.width ? `text.resize(${options.width}, text.height); text.textAutoResize = 'HEIGHT';` : ''}
@@ -3591,7 +3685,8 @@ create
   return 'Text created at (' + smartX + ', ${options.y})';
 })()
 `;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    const result = await daemonExec('eval', { code });
+    console.log(result);
   });
 
 create
@@ -3602,27 +3697,33 @@ create
   .option('--x2 <n>', 'End X (auto + length if x1 not set)')
   .option('--y2 <n>', 'End Y', '0')
   .option('-l, --length <n>', 'Line length', '100')
-  .option('-c, --color <color>', 'Line color', '#000000')
+  .option('-c, --color <color>', 'Line color (hex or var:name)', '#000000')
   .option('-w, --weight <n>', 'Stroke weight', '1')
   .option('--spacing <n>', 'Gap from other elements', '100')
-  .action((options) => {
+  .action(async (options) => {
     checkConnection();
-    const { r, g, b } = hexToRgb(options.color);
     const useSmartPos = options.x1 === undefined;
     const lineLength = parseFloat(options.length);
+    const usesVars = isVarRef(options.color);
+
+    const strokeCode = generateStrokeCode(options.color, 'line', options.weight);
+
     let code = `
+(async () => {
+${usesVars ? varLoadingCode() : ''}
 ${useSmartPos ? smartPosCode(options.spacing) : `const smartX = ${options.x1};`}
 const line = figma.createLine();
 line.x = smartX;
 line.y = ${options.y1};
 line.resize(${useSmartPos ? lineLength : `Math.abs(${options.x2 || options.x1 + '+' + lineLength} - ${options.x1}) || ${lineLength}`}, 0);
 ${options.x2 && options.x1 ? `line.rotation = Math.atan2(${options.y2} - ${options.y1}, ${options.x2} - ${options.x1}) * 180 / Math.PI;` : ''}
-line.strokes = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }];
-line.strokeWeight = ${options.weight};
+${strokeCode.code}
 figma.currentPage.selection = [line];
-'Line created at (' + smartX + ', ${options.y1}) with length ${lineLength}'
+return 'Line created at (' + smartX + ', ${options.y1}) with length ${lineLength}';
+})()
 `;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    const result = await daemonExec('eval', { code });
+    console.log(result);
   });
 
 create
@@ -3678,15 +3779,21 @@ create
   .option('-p, --padding <n>', 'Padding', '16')
   .option('-x <n>', 'X position (auto if not set)')
   .option('-y <n>', 'Y position', '0')
-  .option('--fill <color>', 'Fill color')
+  .option('--fill <color>', 'Fill color (hex or var:name)')
   .option('--radius <n>', 'Corner radius')
   .option('--spacing <n>', 'Gap from other elements', '100')
-  .action((name, options) => {
+  .action(async (name, options) => {
     checkConnection();
     const frameName = name || 'Auto Layout';
     const layoutMode = options.direction === 'col' ? 'VERTICAL' : 'HORIZONTAL';
     const useSmartPos = options.x === undefined;
+    const usesVars = options.fill && isVarRef(options.fill);
+
+    const fillCode = options.fill ? generateFillCode(options.fill, 'frame') : null;
+
     let code = `
+(async () => {
+${usesVars ? varLoadingCode() : ''}
 ${useSmartPos ? smartPosCode(options.spacing) : `const smartX = ${options.x};`}
 const frame = figma.createFrame();
 frame.name = '${frameName}';
@@ -3700,12 +3807,14 @@ frame.paddingTop = ${options.padding};
 frame.paddingRight = ${options.padding};
 frame.paddingBottom = ${options.padding};
 frame.paddingLeft = ${options.padding};
-${options.fill ? `frame.fills = [{ type: 'SOLID', color: { r: ${hexToRgb(options.fill).r}, g: ${hexToRgb(options.fill).g}, b: ${hexToRgb(options.fill).b} } }];` : 'frame.fills = [];'}
+${fillCode ? fillCode.code : 'frame.fills = [];'}
 ${options.radius ? `frame.cornerRadius = ${options.radius};` : ''}
 figma.currentPage.selection = [frame];
-'Auto-layout frame created at (' + smartX + ', ${options.y})'
+return 'Auto-layout frame created at (' + smartX + ', ${options.y})';
+})()
 `;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    const result = await daemonExec('eval', { code });
+    console.log(result);
   });
 
 // ============ CANVAS ============
@@ -4118,39 +4227,93 @@ const set = program
 
 set
   .command('fill <color>')
-  .description('Set fill color')
+  .description('Set fill color (hex or var:name)')
   .option('-n, --node <id>', 'Node ID (uses selection if not set)')
-  .action((color, options) => {
+  .action(async (color, options) => {
     checkConnection();
-    const { r, g, b } = hexToRgb(color);
     const nodeSelector = options.node
       ? `const node = await figma.getNodeByIdAsync('${options.node}'); const nodes = node ? [node] : [];`
       : `const nodes = figma.currentPage.selection;`;
-    let code = `
-${nodeSelector}
-if (nodes.length === 0) 'No node found';
-else { nodes.forEach(n => { if ('fills' in n) n.fills = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }]; }); 'Fill set on ' + nodes.length + ' elements'; }
-`;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+
+    let code;
+    if (color.startsWith('var:')) {
+      // Variable binding
+      const varName = color.slice(4);
+      code = `(async () => {
+        const collections = await figma.variables.getLocalVariableCollectionsAsync();
+        const col = collections.find(c => c.name === 'shadcn');
+        if (!col) return 'shadcn collection not found';
+        let variable = null;
+        for (const id of col.variableIds) {
+          const v = await figma.variables.getVariableByIdAsync(id);
+          if (v && v.name === '${varName}') { variable = v; break; }
+        }
+        if (!variable) return 'Variable ${varName} not found';
+        ${nodeSelector}
+        if (nodes.length === 0) return 'No node found';
+        const boundFill = (v) => figma.variables.setBoundVariableForPaint({ type: 'SOLID', color: { r: 0.5, g: 0.5, b: 0.5 } }, 'color', v);
+        nodes.forEach(n => { if ('fills' in n) n.fills = [boundFill(variable)]; });
+        return 'Bound ' + variable.name + ' to fill on ' + nodes.length + ' elements';
+      })()`;
+      const result = await daemonExec('eval', { code });
+      console.log(chalk.green('✓ ' + (result || 'Done')));
+    } else {
+      // Hex color
+      const { r, g, b } = hexToRgb(color);
+      code = `(async () => {
+        ${nodeSelector}
+        if (nodes.length === 0) return 'No node found';
+        nodes.forEach(n => { if ('fills' in n) n.fills = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }]; });
+        return 'Fill set on ' + nodes.length + ' elements';
+      })()`;
+      figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    }
   });
 
 set
   .command('stroke <color>')
-  .description('Set stroke color')
+  .description('Set stroke color (hex or var:name)')
   .option('-n, --node <id>', 'Node ID')
   .option('-w, --weight <n>', 'Stroke weight', '1')
-  .action((color, options) => {
+  .action(async (color, options) => {
     checkConnection();
-    const { r, g, b } = hexToRgb(color);
     const nodeSelector = options.node
       ? `const node = await figma.getNodeByIdAsync('${options.node}'); const nodes = node ? [node] : [];`
       : `const nodes = figma.currentPage.selection;`;
-    let code = `
-${nodeSelector}
-if (nodes.length === 0) 'No node found';
-else { nodes.forEach(n => { if ('strokes' in n) { n.strokes = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }]; n.strokeWeight = ${options.weight}; } }); 'Stroke set on ' + nodes.length + ' elements'; }
-`;
-    figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+
+    let code;
+    if (color.startsWith('var:')) {
+      // Variable binding
+      const varName = color.slice(4);
+      code = `(async () => {
+        const collections = await figma.variables.getLocalVariableCollectionsAsync();
+        const col = collections.find(c => c.name === 'shadcn');
+        if (!col) return 'shadcn collection not found';
+        let variable = null;
+        for (const id of col.variableIds) {
+          const v = await figma.variables.getVariableByIdAsync(id);
+          if (v && v.name === '${varName}') { variable = v; break; }
+        }
+        if (!variable) return 'Variable ${varName} not found';
+        ${nodeSelector}
+        if (nodes.length === 0) return 'No node found';
+        const boundFill = (v) => figma.variables.setBoundVariableForPaint({ type: 'SOLID', color: { r: 0.5, g: 0.5, b: 0.5 } }, 'color', v);
+        nodes.forEach(n => { if ('strokes' in n) { n.strokes = [boundFill(variable)]; n.strokeWeight = ${options.weight}; } });
+        return 'Bound ' + variable.name + ' to stroke on ' + nodes.length + ' elements';
+      })()`;
+      const result = await daemonExec('eval', { code });
+      console.log(chalk.green('✓ ' + (result || 'Done')));
+    } else {
+      // Hex color
+      const { r, g, b } = hexToRgb(color);
+      code = `(async () => {
+        ${nodeSelector}
+        if (nodes.length === 0) return 'No node found';
+        nodes.forEach(n => { if ('strokes' in n) { n.strokes = [{ type: 'SOLID', color: { r: ${r}, g: ${g}, b: ${b} } }]; n.strokeWeight = ${options.weight}; } });
+        return 'Stroke set on ' + nodes.length + ' elements';
+      })()`;
+      figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: false });
+    }
   });
 
 set
@@ -4593,6 +4756,19 @@ program
         posX = getNextFreeX();
       }
 
+      // Check if JSX uses variable syntax (var:name) - use our own renderer
+      if (jsx.includes('var:')) {
+        const { FigmaClient } = await import('./figma-client.js');
+        const client = new FigmaClient();
+        const code = client.parseJSX(jsx);
+        const result = await daemonExec('eval', { code });
+        if (result && result.id) {
+          console.log(chalk.green('✓ Rendered: ' + result.id));
+          if (result.name) console.log(chalk.gray('  name: ' + result.name));
+          return;
+        }
+      }
+
       // Try fast path for simple frames
       if (options.fast || (!jsx.includes('><') && !jsx.includes('</Frame><'))) {
         const simpleProps = parseSimpleJsx(jsx.trim());
@@ -4658,15 +4834,27 @@ program
 
       for (const jsx of jsxArray) {
         try {
-          const cmd = `figma-use render --stdin --json --x ${currentX} --y ${currentY}`;
-          const output = execSync(cmd, {
-            input: jsx,
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            timeout: 30000
-          });
+          let result;
 
-          const result = JSON.parse(output.trim());
+          // Use our parser if var: syntax detected (fast variable binding)
+          if (jsx.includes('var:')) {
+            const { FigmaClient } = await import('./figma-client.js');
+            const client = new FigmaClient();
+            // Inject position into JSX
+            const positionedJsx = jsx.replace(/<Frame\s+/, `<Frame x={${currentX}} y={${currentY}} `);
+            const code = client.parseJSX(positionedJsx);
+            result = await daemonExec('eval', { code });
+          } else {
+            const cmd = `figma-use render --stdin --json --x ${currentX} --y ${currentY}`;
+            const output = execSync(cmd, {
+              input: jsx,
+              encoding: 'utf8',
+              stdio: ['pipe', 'pipe', 'pipe'],
+              timeout: 30000
+            });
+            result = JSON.parse(output.trim());
+          }
+
           results.push(result);
           console.log(chalk.green('✓ Rendered: ' + result.id + (result.name ? ' (' + result.name + ')' : '')));
 

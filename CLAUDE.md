@@ -53,6 +53,38 @@ node src/index.js var delete-all -c "primitives"    # Only specific collection
 
 ---
 
+## Fast Variable Binding (var: syntax)
+
+Use `var:name` syntax to bind variables directly at creation time (currently searches shadcn collections):
+
+### Create Commands with var:
+```bash
+node src/index.js create rect "Card" --fill "var:card" --stroke "var:border"
+node src/index.js create circle "Avatar" --fill "var:primary"
+node src/index.js create text "Hello" -c "var:foreground"
+node src/index.js create line -c "var:border"
+node src/index.js create frame "Section" --fill "var:background"
+node src/index.js create autolayout "Container" --fill "var:muted"
+node src/index.js create icon lucide:star -c "var:primary"
+```
+
+### JSX render with var:
+```bash
+node src/index.js render '<Frame bg="var:card" stroke="var:border" rounded={12} p={24}>
+  <Text color="var:foreground" size={18}>Title</Text>
+</Frame>'
+```
+
+### Set commands with var:
+```bash
+node src/index.js set fill "var:primary"
+node src/index.js set stroke "var:border"
+```
+
+**Variables:** `background`, `foreground`, `card`, `primary`, `secondary`, `muted`, `accent`, `border`, and their `-foreground` variants.
+
+---
+
 ## Connection Modes
 
 ### Yolo Mode (Recommended)
@@ -90,6 +122,57 @@ node src/index.js node to-component "ID1" "ID2"
 
 # Step 3: Bind variables
 node src/index.js bind fill "zinc/900" -n "ID1"
+```
+
+---
+
+## Complex Components (Pricing Cards, etc.)
+
+For complex multi-element components, use a **single eval** with native Figma API instead of JSX:
+
+### Pattern
+1. **Check for variables first** - don't assume any collection exists
+2. **Use fallback colors** when no variables present
+3. **Single eval** - create everything in one API call
+4. **Data-driven** - define content in array, loop to create
+5. **Equal height** - use `layoutAlign: "STRETCH"` and `layoutGrow: 1`
+
+### Fallback Colors (Dark Theme)
+```javascript
+const colors = {
+  bg: { r: 0.09, g: 0.09, b: 0.11 },       // #17171c
+  card: { r: 0.11, g: 0.11, b: 0.13 },     // #1c1c21
+  border: { r: 0.2, g: 0.2, b: 0.22 },     // #333338
+  primary: { r: 0.23, g: 0.51, b: 0.97 },  // #3b82f8
+  text: { r: 0.98, g: 0.98, b: 0.98 },     // #fafafa
+  muted: { r: 0.6, g: 0.6, b: 0.65 },      // #999aa6
+  white: { r: 1, g: 1, b: 1 }
+};
+```
+
+### Variable Detection
+```javascript
+// Check for ANY variables, not just shadcn
+const collections = await figma.variables.getLocalVariableCollectionsAsync();
+if (collections.length > 0) {
+  // Ask user which collection to use
+} else {
+  // Use fallback colors
+}
+```
+
+### Equal Height Cards
+```javascript
+// After creating cards in container:
+for (const card of container.children) {
+  card.layoutAlign = 'STRETCH';           // Fill container height
+  card.primaryAxisSizingMode = 'FIXED';   // Keep fixed width
+  for (const child of card.children) {
+    if (child.name === 'Features') {
+      child.layoutGrow = 1;               // Features section grows
+    }
+  }
+}
 ```
 
 ---
@@ -133,8 +216,10 @@ minW={100} maxW={500}   // constraints
 minH={50} maxH={300}
 
 // Appearance
-bg="#fff"               // fill color (or var:Name)
+bg="#fff"               // fill color
+bg="var:card"           // bind to variable (FAST, inline binding)
 stroke="#000"           // stroke color
+stroke="var:border"     // bind stroke to variable
 strokeWidth={2}         // stroke thickness
 strokeAlign="inside"    // inside, outside, center
 opacity={0.8}           // 0..1
@@ -153,6 +238,41 @@ rotate={45}             // rotation degrees
 
 // Text
 <Text size={18} weight="bold" color="#000" font="Inter">Hello</Text>
+<Text color="var:foreground">Text with variable color</Text>
+```
+
+### Fast Variable Binding (var: syntax)
+
+Use `var:name` syntax to bind variables directly at creation time (FAST, no separate bind commands needed):
+
+```jsx
+// Frame with bound fill and stroke
+<Frame bg="var:card" stroke="var:border">
+  <Text color="var:foreground">Bound text</Text>
+  <Frame bg="var:primary">
+    <Text color="var:primary-foreground">Button</Text>
+  </Frame>
+</Frame>
+```
+
+**Available shadcn variables:**
+- `background`, `foreground` (page background/text)
+- `card`, `card-foreground` (card backgrounds)
+- `primary`, `primary-foreground` (buttons, accents)
+- `secondary`, `secondary-foreground`
+- `muted`, `muted-foreground` (subtle text)
+- `accent`, `accent-foreground`
+- `border`, `input`, `ring`
+
+**Advantages over separate `bind` commands:**
+- Single render call binds all variables at once
+- No timeouts or multiple API calls
+- Works with complex nested structures
+
+**Also works with `set` commands:**
+```bash
+node src/index.js set fill "var:primary"    # Bind fill to existing element
+node src/index.js set stroke "var:border"   # Bind stroke to existing element
 ```
 
 ### Auto-Layout
