@@ -4828,6 +4828,107 @@ program
     }
   });
 
+// ============ DIAGNOSE ============
+
+program
+  .command('diagnose')
+  .description('Check system compatibility and connection status')
+  .action(async () => {
+    console.log(chalk.cyan('\n🔍 Figma CLI Diagnostics\n'));
+
+    // 1. Node version
+    const nodeVersion = process.version;
+    const nodeMajor = parseInt(nodeVersion.slice(1).split('.')[0]);
+    if (nodeMajor >= 18) {
+      console.log(chalk.green(`✓ Node.js ${nodeVersion}`));
+    } else {
+      console.log(chalk.red(`✗ Node.js ${nodeVersion} (need 18+)`));
+    }
+
+    // 2. Platform
+    const platform = process.platform;
+    const platformNames = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' };
+    console.log(chalk.gray(`  Platform: ${platformNames[platform] || platform}`));
+
+    // 3. Figma version
+    try {
+      let figmaVersion = 'unknown';
+      if (platform === 'darwin') {
+        figmaVersion = execSync('defaults read /Applications/Figma.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null', { encoding: 'utf8' }).trim();
+      } else if (platform === 'win32') {
+        // Windows: check registry or file version
+        figmaVersion = execSync('powershell -command "(Get-Item \\"$env:LOCALAPPDATA\\Figma\\Figma.exe\\").VersionInfo.ProductVersion" 2>nul', { encoding: 'utf8' }).trim() || 'unknown';
+      }
+      const major = parseInt(figmaVersion.split('.')[0]);
+      if (major >= 126) {
+        console.log(chalk.yellow(`⚠ Figma ${figmaVersion} (126+ blocks remote debugging by default)`));
+      } else {
+        console.log(chalk.green(`✓ Figma ${figmaVersion}`));
+      }
+    } catch {
+      console.log(chalk.red('✗ Figma not found'));
+    }
+
+    // 4. Figma running?
+    try {
+      let figmaRunning = false;
+      if (platform === 'darwin' || platform === 'linux') {
+        const ps = execSync('pgrep -f Figma 2>/dev/null || true', { encoding: 'utf8' });
+        figmaRunning = ps.trim().length > 0;
+      } else if (platform === 'win32') {
+        const ps = execSync('tasklist /FI "IMAGENAME eq Figma.exe" 2>nul', { encoding: 'utf8' });
+        figmaRunning = ps.includes('Figma.exe');
+      }
+      if (figmaRunning) {
+        console.log(chalk.green('✓ Figma is running'));
+      } else {
+        console.log(chalk.red('✗ Figma is not running'));
+      }
+    } catch {
+      console.log(chalk.gray('  Could not check if Figma is running'));
+    }
+
+    // 5. Remote debugging port
+    try {
+      const response = await fetch('http://127.0.0.1:9222/json/version', { signal: AbortSignal.timeout(2000) });
+      if (response.ok) {
+        console.log(chalk.green('✓ Remote debugging enabled (port 9222)'));
+      } else {
+        console.log(chalk.red('✗ Remote debugging port not responding'));
+      }
+    } catch {
+      console.log(chalk.red('✗ Remote debugging not available (port 9222 closed)'));
+      console.log(chalk.gray('  → Run: node src/index.js connect'));
+    }
+
+    // 6. Daemon status
+    if (isDaemonRunning()) {
+      console.log(chalk.green('✓ Daemon running on port 3456'));
+    } else {
+      console.log(chalk.yellow('○ Daemon not running (optional, speeds up commands)'));
+    }
+
+    // 7. figma-use availability
+    try {
+      execSync('which figma-use 2>/dev/null || where figma-use 2>nul', { encoding: 'utf8' });
+      console.log(chalk.green('✓ figma-use installed'));
+    } catch {
+      console.log(chalk.yellow('○ figma-use not in PATH (some features limited)'));
+    }
+
+    // 8. Connection test
+    console.log(chalk.gray('\n  Testing connection...'));
+    try {
+      const client = await getFigmaClient();
+      const result = await client.eval('({ file: figma.root.name, page: figma.currentPage.name })');
+      console.log(chalk.green(`✓ Connected to "${result.file}" / "${result.page}"`));
+    } catch (e) {
+      console.log(chalk.red('✗ Connection failed: ' + e.message));
+    }
+
+    console.log('');
+  });
+
 // ============ EXPORT ============
 
 const exp = program
