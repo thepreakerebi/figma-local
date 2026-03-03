@@ -17,6 +17,8 @@ CLI that controls Figma Desktop directly. No API key needed.
 | "find nodes named X" | `node src/index.js find "X"` |
 | "what's on canvas" | `node src/index.js canvas info` |
 | "export as PNG/SVG" | `node src/index.js export png` |
+| "show all variants" | `node src/index.js combos` |
+| "create size variants" | `node src/index.js sizes --base small` |
 
 **Full command reference:** See REFERENCE.md
 
@@ -99,6 +101,12 @@ Uses plugin, no Figma modification. Start plugin each session.
 node src/index.js connect --safe
 ```
 Then: Plugins → Development → FigCli
+
+**Safe Mode Notes:**
+- All commands work via daemon (no figma-use dependency)
+- 60s timeout (same as Yolo Mode)
+- For complex screens, use smaller batches or `eval` with native API
+- `render-batch` automatically uses daemon-based rendering
 
 ---
 
@@ -429,7 +437,7 @@ node src/index.js render '<Frame name="Card" w={320} h={200} bg="#18181b" rounde
 </Frame>
 ```
 
-**3. Buttons need flex for centered text:**
+**3. Buttons need flex + fixed width for centered text:**
 ```jsx
 // BAD: No flex, text not centered
 <Frame bg="#3b82f6" px={16} py={10} rounded={10}>
@@ -440,6 +448,29 @@ node src/index.js render '<Frame name="Card" w={320} h={200} bg="#18181b" rounde
 <Frame bg="#3b82f6" px={16} py={10} rounded={10} flex="row" justify="center" items="center">
   <Text>Button</Text>
 </Frame>
+
+// BEST (for components): Fixed width + auto-layout + text fills
+<Frame w={100} h={40} bg="#3b82f6" rounded={8} flex="row" justify="center" items="center" px={16} py={10}>
+  <Text color="#fff" w="fill" align="center">Button</Text>
+</Frame>
+```
+
+**Button component pattern (for variants):**
+```javascript
+// When creating button components programmatically:
+frame.layoutMode = "HORIZONTAL";
+frame.primaryAxisSizingMode = "FIXED";    // Keep fixed width
+frame.counterAxisSizingMode = "FIXED";    // Keep fixed height
+frame.resize(100, 40);                     // Set size AFTER layout mode
+frame.primaryAxisAlignItems = "CENTER";
+frame.counterAxisAlignItems = "CENTER";
+frame.paddingLeft = frame.paddingRight = 16;
+frame.paddingTop = frame.paddingBottom = 10;
+
+// Text inside button
+text.textAlignHorizontal = "CENTER";
+text.layoutAlign = "STRETCH";              // Fill available width
+text.layoutGrow = 1;                       // Grow to fill
 ```
 
 **4. No emojis - use shapes as icons:**

@@ -246,6 +246,44 @@ node src/index.js daemon restart           # Restart daemon
 node src/index.js files                    # List open Figma files (JSON)
 ```
 
+## Component Combinations (combos)
+
+Generate all variant combinations as individual components:
+
+```bash
+node src/index.js combos                   # Use selection
+node src/index.js combos "1:234"           # By node ID
+node src/index.js combos --dry-run         # Preview without creating
+node src/index.js combos --gap 60          # Custom gap between components
+node src/index.js combos --no-boolean      # Exclude boolean properties
+```
+
+**How it works:**
+1. Select a component set (or any variant/instance)
+2. Run `combos` to generate all combinations
+3. Creates **individual components** directly on canvas (no container frame)
+4. Each component named: `Button/Small/Default`, `Button/Small/Hover`, etc.
+5. Arranged in a grid (last property = columns, rest = rows)
+6. Row/column labels added automatically (use `--no-labels` to skip)
+
+## Size Variants (sizes)
+
+Generate Small/Medium/Large variants from a single component:
+
+```bash
+node src/index.js sizes                       # Use selection
+node src/index.js sizes "1:234"               # By node ID
+node src/index.js sizes --base small          # Source is Small size
+node src/index.js sizes --base large          # Source is Large size
+node src/index.js sizes --gap 60              # Custom gap
+```
+
+**How it works:**
+1. Select a component or frame
+2. Run `sizes --base <size>` to specify which size it is
+3. Creates Small, Medium, Large variants with proportional scaling
+4. Scales: dimensions, font sizes, padding, corner radius, gaps
+
 ## JavaScript Eval
 
 ```bash
@@ -335,3 +373,65 @@ smartX += 100;
 const frame = figma.createFrame();
 frame.x = smartX;
 ```
+
+## Safe Mode
+
+Safe Mode uses a plugin-based connection instead of CDP (Chrome DevTools Protocol). Use it when:
+- Company MacBook with restricted privacy settings
+- Full Disk Access permission not available
+- Prefer no Figma modification
+
+### Connection
+```bash
+node src/index.js connect --safe
+```
+
+Then in Figma: Plugins → Development → FigCli
+
+### Differences from Yolo Mode
+
+| Feature | Yolo Mode | Safe Mode |
+|---------|-----------|-----------|
+| Connection | Direct CDP | Plugin bridge |
+| Setup | Patches Figma once | Start plugin each session |
+| Speed | ~10x faster | Standard |
+| Timeout | 60 seconds | 60 seconds |
+
+### Command Support
+
+All commands work in both modes. In Safe Mode, commands use native Figma API instead of figma-use:
+
+| Command | Yolo Mode | Safe Mode |
+|---------|-----------|-----------|
+| `render` | figma-use | daemon (native API) |
+| `render-batch` | figma-use | daemon (native API) |
+| `node to-component` | figma-use | native API |
+| `node delete` | figma-use | native API |
+| `node tree` | figma-use | native API |
+| `node bindings` | figma-use | native API |
+| `lint` | figma-use | native API |
+| `analyze colors/typography/spacing/clusters` | figma-use | native API |
+| `export-jsx` | figma-use | native API |
+| `export-storybook` | figma-use | native API |
+| All other commands | daemon | daemon |
+
+### Tips for Safe Mode
+
+1. **Keep payloads smaller**: Break complex screens into multiple `render` calls
+2. **All commands work**: Native implementations match figma-use functionality
+3. **Timeout**: Both modes now have 60s timeout
+
+### When render-batch fails
+
+If `render-batch` times out with complex JSX, break it up:
+
+```bash
+# Instead of one large batch
+node src/index.js render-batch '[huge array]'
+
+# Use multiple smaller batches
+node src/index.js render '<Frame>...</Frame>'
+node src/index.js render '<Frame>...</Frame>'
+```
+
+Or use `eval` with native Figma API for maximum control (see "Complex Components" in CLAUDE.md).

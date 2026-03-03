@@ -175,7 +175,7 @@ async function evalViaPlugin(code) {
     const timeout = setTimeout(() => {
       pluginPendingRequests.delete(id);
       reject(new Error('Plugin execution timeout'));
-    }, 30000);
+    }, 60000); // 60s to match CDP timeout
 
     pluginPendingRequests.set(id, { resolve, reject, timeout });
 
