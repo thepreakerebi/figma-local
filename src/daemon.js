@@ -84,7 +84,7 @@ let cdpClient = null;
 let isCdpConnecting = false;
 let lastHealthCheck = 0;
 let lastHealthResult = false;
-const HEALTH_CACHE_MS = 5000; // Cache health for 5 seconds
+const HEALTH_CACHE_MS = 30000; // Cache health for 30 seconds (reduces overhead)
 
 // Plugin Client (Safe Mode)
 let pluginWs = null;
@@ -107,7 +107,7 @@ async function isCdpHealthy(forceCheck = false) {
   try {
     const result = await Promise.race([
       cdpClient.eval('1'), // Simple eval, just check connection works
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
     ]);
     lastHealthCheck = now;
     lastHealthResult = result === 1;
@@ -359,7 +359,7 @@ async function handleRequest(req, res) {
             console.log('[daemon] Reconnecting before retry...');
             try { cdpClient.close(); } catch {}
             cdpClient = null;
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 200));
           }
         }
       }

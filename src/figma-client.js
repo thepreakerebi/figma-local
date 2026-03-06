@@ -331,20 +331,40 @@ export class FigmaClient {
       collectFonts(children);
     });
 
-    const fontLoads = Array.from(allFonts)
-      .map(s => `figma.loadFontAsync({family:'Inter',style:'${s}'})`)
-      .join(',') || 'figma.loadFontAsync({family:"Inter",style:"Regular"})';
-
-    const varLoadCode = anyUsesVars ? `
-      const collections = await figma.variables.getLocalVariableCollectionsAsync();
-      const shadcnCol = collections.find(c => c.name === 'shadcn');
-      const vars = {};
-      if (shadcnCol) {
-        for (const id of shadcnCol.variableIds) {
-          const v = await figma.variables.getVariableByIdAsync(id);
-          if (v) vars[v.name] = v;
+    // Font caching: only load fonts not yet loaded in this session
+    const fontStyles = Array.from(allFonts);
+    const fontLoads = fontStyles.length > 0
+      ? `
+        if (!globalThis.__loadedFonts) globalThis.__loadedFonts = new Set();
+        const fontsToLoad = ${JSON.stringify(fontStyles)}.filter(s => !globalThis.__loadedFonts.has(s));
+        if (fontsToLoad.length > 0) {
+          await Promise.all(fontsToLoad.map(s => figma.loadFontAsync({family:'Inter',style:s})));
+          fontsToLoad.forEach(s => globalThis.__loadedFonts.add(s));
         }
+      `
+      : `
+        if (!globalThis.__loadedFonts) globalThis.__loadedFonts = new Set();
+        if (!globalThis.__loadedFonts.has('Regular')) {
+          await figma.loadFontAsync({family:'Inter',style:'Regular'});
+          globalThis.__loadedFonts.add('Regular');
+        }
+      `;
+
+    // Variable caching: reuse loaded vars across calls
+    const varLoadCode = anyUsesVars ? `
+      if (!globalThis.__varsCache || Date.now() - (globalThis.__varsCacheTime || 0) > 30000) {
+        const collections = await figma.variables.getLocalVariableCollectionsAsync();
+        const shadcnCol = collections.find(c => c.name === 'shadcn');
+        globalThis.__varsCache = {};
+        if (shadcnCol) {
+          for (const id of shadcnCol.variableIds) {
+            const v = await figma.variables.getVariableByIdAsync(id);
+            if (v) globalThis.__varsCache[v.name] = v;
+          }
+        }
+        globalThis.__varsCacheTime = Date.now();
       }
+      const vars = globalThis.__varsCache;
       const boundFill = (variable) => figma.variables.setBoundVariableForPaint(
         { type: 'SOLID', color: { r: 0.5, g: 0.5, b: 0.5 } }, 'color', variable
       );
@@ -478,7 +498,7 @@ export class FigmaClient {
 
     return `
       (async function() {
-        await Promise.all([${fontLoads}]);
+        ${fontLoads}
         ${varLoadCode}
 
         // Calculate start position
@@ -788,9 +808,8 @@ export class FigmaClient {
     };
     collectFontsAndVars(children);
 
-    const fontLoads = Array.from(fonts)
-      .map(s => `figma.loadFontAsync({family:'Inter',style:'${s}'})`)
-      .join(',');
+    // Font caching for single render
+    const fontStyles = Array.from(fonts);
 
     // Generate child code recursively
     let childCounter = 0;
@@ -1022,26 +1041,48 @@ export class FigmaClient {
     const rootFillCode = this.generateFillCode(bg, 'frame');
     const rootStrokeCode = stroke ? this.generateStrokeCode(stroke, 'frame') : { code: '', usesVars: false };
 
-    // Variable loading code (only if any vars used)
+    // Variable loading code with caching (only if any vars used)
     const varLoadCode = usesVars ? `
-        // Load shadcn variables
-        const collections = await figma.variables.getLocalVariableCollectionsAsync();
-        const shadcnCol = collections.find(c => c.name === 'shadcn');
-        const vars = {};
-        if (shadcnCol) {
-          for (const id of shadcnCol.variableIds) {
-            const v = await figma.variables.getVariableByIdAsync(id);
-            if (v) vars[v.name] = v;
+        // Load shadcn variables (cached for 30s)
+        if (!globalThis.__varsCache || Date.now() - (globalThis.__varsCacheTime || 0) > 30000) {
+          const collections = await figma.variables.getLocalVariableCollectionsAsync();
+          const shadcnCol = collections.find(c => c.name === 'shadcn');
+          globalThis.__varsCache = {};
+          if (shadcnCol) {
+            for (const id of shadcnCol.variableIds) {
+              const v = await figma.variables.getVariableByIdAsync(id);
+              if (v) globalThis.__varsCache[v.name] = v;
+            }
           }
+          globalThis.__varsCacheTime = Date.now();
         }
+        const vars = globalThis.__varsCache;
         const boundFill = (variable) => figma.variables.setBoundVariableForPaint(
           { type: 'SOLID', color: { r: 0.5, g: 0.5, b: 0.5 } }, 'color', variable
         );
     ` : '';
 
+    // Font loading with caching
+    const fontLoadCode = fontStyles.length > 0
+      ? `
+        if (!globalThis.__loadedFonts) globalThis.__loadedFonts = new Set();
+        const fontsToLoad = ${JSON.stringify(fontStyles)}.filter(s => !globalThis.__loadedFonts.has(s));
+        if (fontsToLoad.length > 0) {
+          await Promise.all(fontsToLoad.map(s => figma.loadFontAsync({family:'Inter',style:s})));
+          fontsToLoad.forEach(s => globalThis.__loadedFonts.add(s));
+        }
+      `
+      : `
+        if (!globalThis.__loadedFonts) globalThis.__loadedFonts = new Set();
+        if (!globalThis.__loadedFonts.has('Regular')) {
+          await figma.loadFontAsync({family:'Inter',style:'Regular'});
+          globalThis.__loadedFonts.add('Regular');
+        }
+      `;
+
     return `
       (async function() {
-        await Promise.all([${fontLoads || 'figma.loadFontAsync({family:"Inter",style:"Regular"})'}]);
+        ${fontLoadCode}
         ${varLoadCode}
         ${smartPosCode}
 
