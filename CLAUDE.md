@@ -129,31 +129,75 @@ Then: Plugins → Development → FigCli
 **Safe Mode Notes:**
 - All commands work via daemon (no figma-use dependency)
 - 60s timeout (same as Yolo Mode)
-- For complex screens, use smaller batches or `eval` with native API
-- `render-batch` automatically uses daemon-based rendering
+- **CRITICAL: `render-batch` does NOT render text properly in Safe Mode!**
+- Use `eval` with direct Figma API for components with text
 
 ---
 
-## Creating Components
+## Creating Components (Safe Mode)
 
-When user asks to "create cards", "design buttons":
+**DO NOT use render-batch for components with text in Safe Mode.** Use `eval` with native Figma API:
 
-1. **Each component = separate frame** (NOT inside parent gallery)
-2. **Convert to component** after creation
-3. **Use variables** for colors
+```javascript
+node src/index.js eval "(async () => {
+  // 1. Load fonts FIRST
+  await figma.loadFontAsync({ family: 'Inter', style: 'Bold' });
+  await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
 
+  // 2. Create frame with FIXED width
+  const card = figma.createFrame();
+  card.name = 'Card';
+  card.x = 100; card.y = 100;
+  card.resize(340, 1); // Fixed width!
+  card.layoutMode = 'HORIZONTAL';
+  card.primaryAxisSizingMode = 'FIXED'; // Keep width fixed
+  card.counterAxisSizingMode = 'AUTO';  // Height hugs content
+  card.paddingTop = card.paddingBottom = card.paddingLeft = card.paddingRight = 20;
+  card.itemSpacing = 16;
+  card.cornerRadius = 12;
+  card.fills = [{ type: 'SOLID', color: { r: 0.094, g: 0.094, b: 0.106 } }];
+
+  // 3. Content frame must FILL remaining space
+  const content = figma.createFrame();
+  content.fills = [];
+  content.layoutMode = 'VERTICAL';
+  content.itemSpacing = 4;
+  card.appendChild(content);
+  content.layoutSizingHorizontal = 'FILL'; // Critical!
+
+  // 4. Text must FILL to wrap
+  const title = figma.createText();
+  title.fontName = { family: 'Inter', style: 'Bold' };
+  title.characters = 'Title here';
+  title.fontSize = 14;
+  title.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  content.appendChild(title);
+  title.layoutSizingHorizontal = 'FILL'; // Critical!
+
+  // 5. Convert to component
+  const comp = figma.createComponentFromNode(card);
+  return { id: comp.id, name: comp.name };
+})()"
+```
+
+**Auto-Layout Rules (Text Cut-Off Prevention):**
+1. Parent frame needs `resize(WIDTH, 1)` + `primaryAxisSizingMode = 'FIXED'`
+2. Child content frames need `layoutSizingHorizontal = 'FILL'` AFTER appendChild
+3. ALL text nodes need `layoutSizingHorizontal = 'FILL'` AFTER appendChild
+4. Order matters: appendChild first, then set layoutSizingHorizontal
+
+**Before Creating - Always Clean Up:**
+```javascript
+// Check what's on page
+const nodes = figma.currentPage.children.map(n => ({ name: n.name, x: n.x }));
+
+// Delete old nodes to prevent overlap
+for (const child of [...figma.currentPage.children]) child.remove();
+```
+
+**After Creating - Always Verify:**
 ```bash
-# Step 1: Create separately
-node src/index.js render-batch '[
-  "<Frame name=\"Card 1\" w={320} h={200} bg=\"#18181b\" rounded={12} flex=\"col\" p={24}><Text color=\"#fff\">Title</Text></Frame>",
-  "<Frame name=\"Card 2\" w={320} h={200} bg=\"#18181b\" rounded={12} flex=\"col\" p={24}><Text color=\"#fff\">Title</Text></Frame>"
-]'
-
-# Step 2: Convert
-node src/index.js node to-component "ID1" "ID2"
-
-# Step 3: Bind variables
-node src/index.js bind fill "zinc/900" -n "ID1"
+node src/index.js verify "NODE_ID"  # Take screenshot and check visually
 ```
 
 ---
