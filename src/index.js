@@ -5092,9 +5092,10 @@ return JSON.stringify({ theme: { extend: { colors } } }, null, 2);
 
 program
   .command('verify [nodeId]')
-  .description('Take a small screenshot for AI verification (returns base64)')
+  .description('Take a small screenshot for AI verification (returns base64 or saves to file)')
   .option('-s, --scale <number>', 'Export scale (default: 0.5 for small size)', '0.5')
   .option('--max <pixels>', 'Max dimension in pixels (default: 2000)', '2000')
+  .option('--save [path]', 'Save as PNG file (default: /tmp/figma-verify-{id}.png)')
   .action((nodeId, options) => {
     checkConnection();
     const scale = parseFloat(options.scale);
@@ -5146,14 +5147,33 @@ program
       process.exit(1);
     }
 
-    // Output as JSON for easy parsing
-    console.log(JSON.stringify({
-      name: result.name,
-      id: result.id,
-      width: result.width,
-      height: result.height,
-      base64: result.base64
-    }));
+    // Save to file if --save option provided
+    if (options.save !== undefined) {
+      const safeId = result.id.replace(/:/g, '-');
+      const savePath = typeof options.save === 'string'
+        ? options.save
+        : `/tmp/figma-verify-${safeId}.png`;
+
+      const buffer = Buffer.from(result.base64, 'base64');
+      writeFileSync(savePath, buffer);
+
+      console.log(JSON.stringify({
+        name: result.name,
+        id: result.id,
+        width: result.width,
+        height: result.height,
+        saved: savePath
+      }));
+    } else {
+      // Output as JSON for easy parsing
+      console.log(JSON.stringify({
+        name: result.name,
+        id: result.id,
+        width: result.width,
+        height: result.height,
+        base64: result.base64
+      }));
+    }
   });
 
 // ============ EVAL ============
