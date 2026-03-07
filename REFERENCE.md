@@ -260,9 +260,26 @@ Shape types: `ROUNDED_RECTANGLE`, `RECTANGLE`, `ELLIPSE`, `DIAMOND`, `TRIANGLE_U
 node src/index.js connect                  # Connect (Yolo Mode)
 node src/index.js connect --safe           # Connect (Safe Mode, plugin)
 node src/index.js daemon status            # Check daemon status
-node src/index.js daemon restart           # Restart daemon
+node src/index.js daemon status --debug    # Detailed token & connection info
+node src/index.js daemon diagnose          # Full diagnostic (troubleshooting)
+node src/index.js daemon start             # Start daemon manually
+node src/index.js daemon start --force     # Force restart
+node src/index.js daemon restart           # Restart with fresh token
+node src/index.js daemon stop              # Stop daemon
+node src/index.js daemon reconnect         # Reconnect to Figma
 node src/index.js files                    # List open Figma files (JSON)
 ```
+
+### Troubleshooting Auth Errors
+
+If you see "Unauthorized: Invalid or missing token":
+
+```bash
+node src/index.js daemon diagnose          # See what's wrong
+node src/index.js daemon restart           # Usually fixes it
+```
+
+Token file location: `~/.figma-ds-cli/.daemon-token`
 
 ## Component Combinations (combos)
 
