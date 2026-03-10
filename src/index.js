@@ -5074,7 +5074,22 @@ program
         await applyPostProcessFixes(result.id, postProcessFixes);
       }
     } catch (e) {
-      console.log(chalk.red('✗ Render failed: ' + (e.stderr || e.message)));
+      const msg = e.stderr || e.message || String(e);
+      // Extract node context from error if available
+      const nodeMatch = msg.match(/\[Node: ([^\]]+)\]/);
+      if (nodeMatch) {
+        console.log(chalk.red('✗ Render failed at ' + chalk.yellow(nodeMatch[1]) + ':'));
+        console.log(chalk.red('  ' + msg.replace(/\[Node: [^\]]+\]\s*/, '')));
+      } else {
+        console.log(chalk.red('✗ Render failed: ' + msg));
+      }
+      // Hint for common errors
+      if (msg.includes('FILL can only be set on children of auto-layout')) {
+        console.log(chalk.yellow('  💡 Hint: w="fill" requires the parent Frame to have flex="row" or flex="col"'));
+      }
+      if (msg.includes('Cannot read properties of null')) {
+        console.log(chalk.yellow('  💡 Hint: A variable binding (var:name) may not exist. Check with: var list'));
+      }
     }
   });
 

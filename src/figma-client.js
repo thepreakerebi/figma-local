@@ -401,7 +401,7 @@ export class FigmaClient {
 
       // Generate child code
       let childCounter = 0;
-      const generateChildCode = (items, parentVar) => {
+      const generateChildCode = (items, parentVar, parentFlex) => {
         return items.map(item => {
           const idx = `${frameIdx}_${childCounter++}`;
           if (item._type === 'text') {
@@ -447,7 +447,7 @@ export class FigmaClient {
             const fItemsVal = alignMap[fItems] || 'CENTER';
             const fFillCode = fBg ? this.generateFillCode(fBg, `el${idx}`) : { code: `el${idx}.fills = [];`, usesVars: false };
             const fStrokeCode = fStroke ? this.generateStrokeCode(fStroke, `el${idx}`) : { code: '' };
-            const nestedChildren = item._children ? generateChildCode(item._children, `el${idx}`) : '';
+            const nestedChildren = item._children ? generateChildCode(item._children, `el${idx}`, fFlex) : '';
             return `
           const el${idx} = figma.createFrame();
           el${idx}.name = ${JSON.stringify(fName)};
@@ -466,14 +466,15 @@ export class FigmaClient {
           ${parentVar}.appendChild(el${idx});
           ${fillW ? `el${idx}.layoutSizingHorizontal = 'FILL';` : ''}
           ${fillH ? `el${idx}.layoutSizingVertical = 'FILL';` : ''}
-          ${fGrow ? `el${idx}.layoutGrow = ${fGrow};` : ''}
+          ${fGrow && parentFlex === 'row' ? `el${idx}.layoutSizingHorizontal = 'FILL';` : ''}
+          ${fGrow && parentFlex === 'col' ? `el${idx}.layoutSizingVertical = 'FILL';` : ''}
           ${nestedChildren}`;
           }
           return '';
         }).join('\n');
       };
 
-      const childCode = generateChildCode(children, `f${frameIdx}`);
+      const childCode = generateChildCode(children, `f${frameIdx}`, flex);
 
       return `
         const f${frameIdx} = figma.createFrame();
@@ -577,8 +578,15 @@ export class FigmaClient {
         }
         i += closeTag.length;
       } else if (remaining.startsWith(`<${tagName} `) || remaining.startsWith(`<${tagName}>`)) {
-        depth++;
-        i++;
+        // Check if this is a self-closing tag (e.g. <Frame ... />)
+        const selfCloseCheck = remaining.match(new RegExp(`^<${tagName}(?:\\s+[^>]*)?\\s*\\/>`));
+        if (selfCloseCheck) {
+          // Self-closing: skip entirely, don't change depth
+          i += selfCloseCheck[0].length;
+        } else {
+          depth++;
+          i++;
+        }
       } else {
         i++;
       }
@@ -607,12 +615,27 @@ export class FigmaClient {
     const children = [];
     const frameRanges = [];
 
-    // Find all nested Frame elements using balanced tag matching
-    // Use \s* to allow frames with or without attributes
-    const frameOpenRegex = /<Frame(?:\s+([^>]*?))?>/g;
+    // First: parse self-closing Frame elements (e.g. <Frame w="fill" h={1} />)
+    const frameSelfCloseRegex = /<Frame(?:\s+([^>]*?))?\s*\/>/g;
     let match;
 
+    while ((match = frameSelfCloseRegex.exec(childrenStr)) !== null) {
+      const frameProps = this.parseProps(match[1] || '');
+      frameProps._type = 'frame';
+      frameProps._index = match.index;
+      frameProps._children = [];
+      children.push(frameProps);
+      frameRanges.push({ start: match.index, end: match.index + match[0].length });
+    }
+
+    // Then: find all nested Frame elements with open/close tags
+    const frameOpenRegex = /<Frame(?:\s+([^>]*?))?>/g;
+
     while ((match = frameOpenRegex.exec(childrenStr)) !== null) {
+      // Skip if this range was already consumed by a self-closing frame
+      const alreadyConsumed = frameRanges.some(r => match.index >= r.start && match.index < r.end);
+      if (alreadyConsumed) continue;
+
       const frameProps = this.parseProps(match[1] || '');
       frameProps._type = 'frame';
       frameProps._index = match.index;
@@ -823,7 +846,7 @@ export class FigmaClient {
 
     // Generate child code recursively
     let childCounter = 0;
-    const generateChildCode = (items, parentVar) => {
+    const generateChildCode = (items, parentVar, parentFlex) => {
       return items.map(item => {
         const idx = childCounter++;
         if (item._type === 'text') {
@@ -835,6 +858,7 @@ export class FigmaClient {
           const textFillCode = this.generateFillCode(color, `el${idx}`);
 
           return `
+        __currentNode = 'Text: ${item.content.substring(0, 30).replace(/'/g, "\\'")}';
         const el${idx} = figma.createText();
         el${idx}.fontName = {family:'Inter',style:'${style}'};
         el${idx}.fontSize = ${size};
@@ -847,13 +871,13 @@ export class FigmaClient {
           const fName = item.name || 'Nested Frame';
           const fBg = item.bg || item.fill || '#ffffff';
           const fStroke = item.stroke || null;
-          const fRounded = item.rounded || item.radius || 8;
+          const fRounded = item.rounded || item.radius || 0;
           const fFlex = item.flex || 'row';
           const fGap = item.gap || 0;
-          // Default padding for buttons
+          // Default padding is 0 (only set padding when explicitly specified)
           const fP = item.p !== undefined ? item.p : (item.padding !== undefined ? item.padding : null);
-          const fPx = item.px !== undefined ? item.px : (fP !== null ? fP : 16);
-          const fPy = item.py !== undefined ? item.py : (fP !== null ? fP : 10);
+          const fPx = item.px !== undefined ? item.px : (fP !== null ? fP : 0);
+          const fPy = item.py !== undefined ? item.py : (fP !== null ? fP : 0);
           const fAlign = item.align || 'center';
           const fJustify = item.justify || 'center';
           // Clip defaults to false for nested frames
@@ -882,20 +906,23 @@ export class FigmaClient {
           const fAlignVal = alignMap[fAlign] || 'CENTER';
           const fJustifyVal = alignMap[fJustify] || 'CENTER';
 
-          const nestedChildren = item._children ? generateChildCode(item._children, `el${idx}`) : '';
+          const nestedChildren = item._children ? generateChildCode(item._children, `el${idx}`, fFlex) : '';
           const frameFillCode = this.generateFillCode(fBg, `el${idx}`);
           const frameStrokeCode = fStroke ? this.generateStrokeCode(fStroke, `el${idx}`) : { code: '' };
 
+          // Determine sizing: FILL, FIXED, or HUG for each axis
+          const wantFillH = fillWidth || (fGrow !== null && parentFlex === 'row');
+          const wantFillV = fillHeight || (fGrow !== null && parentFlex === 'col');
+          const hSizing = wantFillH ? 'FILL' : (hasWidth ? 'FIXED' : 'HUG');
+          const vSizing = wantFillV ? 'FILL' : (hasHeight ? 'FIXED' : 'HUG');
+
           return `
+        __currentNode = 'Frame: ${fName.replace(/'/g, "\\'")}';
         const el${idx} = figma.createFrame();
         el${idx}.name = ${JSON.stringify(fName)};
         el${idx}.layoutMode = '${fFlex === 'row' ? 'HORIZONTAL' : 'VERTICAL'}';
         ${fWrap && fFlex === 'row' ? `el${idx}.layoutWrap = 'WRAP';` : ''}
-        el${idx}.primaryAxisSizingMode = '${hasWidth && !fillWidth ? 'FIXED' : 'AUTO'}';
-        el${idx}.counterAxisSizingMode = '${hasHeight && !fillHeight ? 'FIXED' : 'AUTO'}';
-        ${hasWidth && !fillWidth || hasHeight && !fillHeight ? `el${idx}.resize(${hasWidth ? fWidth : 100}, ${hasHeight ? fHeight : 40});` : ''}
-        ${fillWidth ? `el${idx}.layoutSizingHorizontal = 'FILL';` : ''}
-        ${fillHeight ? `el${idx}.layoutSizingVertical = 'FILL';` : ''}
+        ${hasWidth || hasHeight ? `el${idx}.resize(${hasWidth ? fWidth : 100}, ${hasHeight ? fHeight : 100});` : ''}
         el${idx}.itemSpacing = ${fGap};
         el${idx}.paddingTop = ${fPy};
         el${idx}.paddingBottom = ${fPy};
@@ -908,9 +935,10 @@ export class FigmaClient {
         el${idx}.counterAxisAlignItems = '${fAlignVal}';
         el${idx}.clipsContent = ${fClip};
         ${parentVar}.appendChild(el${idx});
+        el${idx}.layoutSizingHorizontal = '${hSizing}';
+        el${idx}.layoutSizingVertical = '${vSizing}';
         ${nestedChildren}
         ${fWrap && fFlex === 'row' && fWrapGap > 0 ? `el${idx}.counterAxisSpacing = ${fWrapGap};` : ''}
-        ${fGrow !== null ? `el${idx}.layoutGrow = ${fGrow};` : ''}
         ${fPosition === 'absolute' ? `el${idx}.layoutPositioning = 'ABSOLUTE'; el${idx}.x = ${fAbsoluteX}; el${idx}.y = ${fAbsoluteY};` : ''}`;
         } else if (item._type === 'rect') {
           // Rectangle element
@@ -1026,7 +1054,7 @@ export class FigmaClient {
       }).join('\n');
     };
 
-    const childCode = generateChildCode(children, 'frame');
+    const childCode = generateChildCode(children, 'frame', flex);
 
     // Map align/justify to Figma values for root frame
     const alignMap = { start: 'MIN', center: 'CENTER', end: 'MAX', stretch: 'STRETCH' };
@@ -1096,7 +1124,10 @@ export class FigmaClient {
         ${varLoadCode}
         ${smartPosCode}
 
+        let __currentNode = 'root';
+        try {
         const frame = figma.createFrame();
+        __currentNode = ${JSON.stringify(name)};
         frame.name = ${JSON.stringify(name)};
         frame.resize(${width}, ${height});
         frame.x = smartX;
@@ -1123,6 +1154,10 @@ export class FigmaClient {
         ${childCode}
 
         return { id: frame.id, name: frame.name };
+        } catch(e) {
+          frame.remove();
+          throw new Error('[Node: ' + __currentNode + '] ' + e.message);
+        }
       })()
     `;
   }
