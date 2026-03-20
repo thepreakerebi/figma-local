@@ -228,15 +228,15 @@
       lastPong = Date.now();
       keepaliveTimer = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-          // Check if we got a pong recently (within 8s for faster detection)
-          if (Date.now() - lastPong > 8000) {
-            console.log('No pong received, reconnecting...');
+          // Allow up to 90s without pong — Figma throttles timers when in background
+          if (Date.now() - lastPong > 90000) {
+            console.log('No pong in 90s, reconnecting...');
             ws.close();
             return;
           }
           ws.send(JSON.stringify({ type: 'ping' }));
         }
-      }, 3000);  // Ping every 3s for faster dead connection detection
+      }, 15000);  // Ping every 15s — relaxed to survive background throttling
     }
 
     function stopKeepalive() {

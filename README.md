@@ -306,7 +306,7 @@ The daemon runs only on `127.0.0.1` (never exposed to the network) and is protec
 | 1 MB request/message body cap | Memory exhaustion from oversized payloads |
 | Plugin input validation | Code size cap (512 KB), batch size cap (50), strict field types |
 | Rate limiting | Max 30 evals per 10 s per connection |
-| Idle auto-shutdown | Daemon stops after 10 minutes of inactivity |
+| Idle auto-shutdown | Daemon stops after 1 hour of inactivity |
 
 The session token is generated fresh on every `fig connect`, stored at `~/.figma-ds-cli/.daemon-token` with `chmod 600` (owner-read only).
 
