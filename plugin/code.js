@@ -1,15 +1,61 @@
 /**
- * Figma CLI Bridge Plugin
+ * Figma CLI Bridge Plugin — code.js
  *
- * Safe Mode: Connects to CLI daemon via WebSocket
- * No debug port needed, no patching required.
+ * Safe Mode: Connects to CLI daemon via WebSocket.
+ * No debug port, no patching required.
+ *
+ * Security hardening:
+ *  - All incoming messages from the UI are validated before execution
+ *  - Code and batch payloads are size-capped
+ *  - Batch arrays are length-capped
+ *  - Notify text is sanitised (no arbitrary HTML/script injection)
+ *  - Rate limiting: max 30 evals per 10-second window
  */
+
+// ── Constants ──────────────────────────────────────────────────
+const MAX_CODE_BYTES   = 512 * 1024;  // 512 KB max per eval code string
+const MAX_BATCH_COUNT  = 50;          // Max codes in a single eval-batch
+const MAX_NOTIFY_CHARS = 200;         // Max chars shown in Figma notification
+
+// ── Rate limiter ───────────────────────────────────────────────
+// Prevents a rogue daemon (or compromised WebSocket) from flooding
+// the plugin with eval calls.
+const RATE_WINDOW_MS = 10_000;
+const RATE_MAX       = 30;
+let rateCount        = 0;
+let rateWindowStart  = Date.now();
+
+function isRateAllowed() {
+  const now = Date.now();
+  if (now - rateWindowStart > RATE_WINDOW_MS) {
+    rateCount = 0;
+    rateWindowStart = now;
+  }
+  if (rateCount >= RATE_MAX) return false;
+  rateCount++;
+  return true;
+}
+
+// ── Input validators ───────────────────────────────────────────
+function isValidId(id) {
+  return typeof id === 'number' && Number.isFinite(id) && id >= 0;
+}
+
+function isValidCode(code) {
+  return typeof code === 'string' && code.length > 0 && code.length <= MAX_CODE_BYTES;
+}
+
+function sanitiseNotify(text) {
+  if (typeof text !== 'string') return 'Unknown error';
+  // Strip anything that looks like HTML tags, keep plain text only
+  return text.replace(/<[^>]*>/g, '').slice(0, MAX_NOTIFY_CHARS);
+}
 
 // Show minimal UI (needed for WebSocket connection)
 figma.showUI(__html__, {
-  width: 160,
-  height: 72,
-  position: { x: -9999, y: 9999 }  // Bottom-left (push to far left)
+  width: 200,
+  height: 92,
+  position: { x: -9999, y: 9999 }
 });
 
 // Execute code with auto-return and timeout protection
@@ -50,18 +96,52 @@ async function executeCode(code, timeoutMs = 25000) {
 
 // Handle messages from UI (WebSocket bridge)
 figma.ui.onmessage = async (msg) => {
-  // Single eval
+  if (!msg || typeof msg.type !== 'string') return;
+
+  // ── Single eval ─────────────────────────────────────────────
   if (msg.type === 'eval') {
+    // Validate id and code before doing anything
+    if (!isValidId(msg.id)) return;
+    if (!isValidCode(msg.code)) {
+      figma.ui.postMessage({ type: 'result', id: msg.id, error: 'Invalid or oversized code payload' });
+      return;
+    }
+    if (!isRateAllowed()) {
+      figma.ui.postMessage({ type: 'result', id: msg.id, error: 'Rate limit exceeded — slow down' });
+      return;
+    }
     try {
       const result = await executeCode(msg.code);
-      figma.ui.postMessage({ type: 'result', id: msg.id, result: result });
+      figma.ui.postMessage({ type: 'result', id: msg.id, result });
     } catch (error) {
       figma.ui.postMessage({ type: 'result', id: msg.id, error: error.message });
     }
+    return;
   }
 
-  // Batch eval (execute multiple codes in sequence, return all results)
+  // ── Batch eval ──────────────────────────────────────────────
   if (msg.type === 'eval-batch') {
+    if (!isValidId(msg.id)) return;
+    if (!Array.isArray(msg.codes)) {
+      figma.ui.postMessage({ type: 'batch-result', id: msg.id, results: [{ success: false, error: 'codes must be an array' }] });
+      return;
+    }
+    // Cap array length
+    if (msg.codes.length > MAX_BATCH_COUNT) {
+      figma.ui.postMessage({ type: 'batch-result', id: msg.id, results: [{ success: false, error: `Batch too large (max ${MAX_BATCH_COUNT})` }] });
+      return;
+    }
+    // Validate each code string
+    for (const c of msg.codes) {
+      if (!isValidCode(c)) {
+        figma.ui.postMessage({ type: 'batch-result', id: msg.id, results: [{ success: false, error: 'Invalid or oversized code in batch' }] });
+        return;
+      }
+    }
+    if (!isRateAllowed()) {
+      figma.ui.postMessage({ type: 'batch-result', id: msg.id, results: [{ success: false, error: 'Rate limit exceeded' }] });
+      return;
+    }
     const results = [];
     for (const code of msg.codes) {
       try {
@@ -71,19 +151,23 @@ figma.ui.onmessage = async (msg) => {
         results.push({ success: false, error: error.message });
       }
     }
-    figma.ui.postMessage({ type: 'batch-result', id: msg.id, results: results });
+    figma.ui.postMessage({ type: 'batch-result', id: msg.id, results });
+    return;
   }
 
+  // ── Connection lifecycle (no eval, safe to handle directly) ──
   if (msg.type === 'connected') {
-    figma.notify('✓ Figma DS CLI connected', { timeout: 2000 });
+    figma.notify('✓ FigCli connected', { timeout: 2000 });
+    return;
   }
-
   if (msg.type === 'disconnected') {
-    figma.notify('Figma DS CLI disconnected', { timeout: 2000 });
+    figma.notify('FigCli disconnected', { timeout: 2000 });
+    return;
   }
-
   if (msg.type === 'error') {
-    figma.notify('Figma DS CLI: ' + msg.message, { error: true });
+    // Sanitise before displaying in Figma UI
+    figma.notify('FigCli: ' + sanitiseNotify(msg.message), { error: true });
+    return;
   }
 };
 

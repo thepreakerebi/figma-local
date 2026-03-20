@@ -16,6 +16,7 @@
 
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { randomBytes } from 'crypto';
 import { readFileSync, statSync, writeFileSync, unlinkSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir, tmpdir } from 'os';
@@ -389,7 +390,17 @@ async function handleRequest(req, res) {
   // Execute command
   if (req.url === '/exec' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => body += chunk);
+    let bodyBytes = 0;
+    req.on('data', chunk => {
+      bodyBytes += chunk.length;
+      if (bodyBytes > MAX_BODY_BYTES) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', async () => {
       const MAX_RETRIES = 2;
       let lastError;
@@ -479,21 +490,95 @@ async function handleRequest(req, res) {
 
 const httpServer = createServer(handleRequest);
 
-// WebSocket server for plugin connections
-const wss = new WebSocketServer({ server: httpServer, path: '/plugin' });
+// ============ SECURITY: WebSocket nonce handshake ============
+// Prevents rogue local processes from connecting as the plugin.
+// Daemon sends a one-time challenge nonce on connect; plugin must echo it
+// back in the hello message within HANDSHAKE_TIMEOUT_MS or gets closed.
 
-wss.on('connection', (ws) => {
-  console.log('[daemon] Plugin connected (Safe Mode)');
-  pluginWs = ws;
-  resetIdleTimer(); // Plugin connection counts as activity
+const HANDSHAKE_TIMEOUT_MS = 5000;
+const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MB request body cap
+
+// WebSocket: 1 MB max payload, reject oversized messages before parsing
+const wss = new WebSocketServer({ server: httpServer, path: '/plugin', maxPayload: MAX_BODY_BYTES });
+
+// ── Rate limiting per WebSocket connection ──
+// Max 30 eval messages per 10-second window
+const RATE_WINDOW_MS = 10_000;
+const RATE_MAX = 30;
+
+function makeRateLimiter() {
+  let count = 0;
+  let windowStart = Date.now();
+  return function isAllowed() {
+    const now = Date.now();
+    if (now - windowStart > RATE_WINDOW_MS) { count = 0; windowStart = now; }
+    if (count >= RATE_MAX) return false;
+    count++;
+    return true;
+  };
+}
+
+wss.on('connection', (ws, req) => {
+  // ── Layer 1: Origin header check ──
+  // Figma plugins send no Origin or a figma:// origin.
+  // A browser tab trying to connect would send an http(s):// origin — reject it.
+  const origin = req.headers['origin'] || '';
+  if (origin && !origin.startsWith('figma://') && !origin.startsWith('null')) {
+    console.warn(`[daemon] WebSocket rejected: bad origin "${origin}"`);
+    ws.close(1008, 'Invalid origin');
+    return;
+  }
+
+  // ── Layer 2: Nonce handshake ──
+  // Daemon sends a random challenge; plugin must echo the same nonce in hello.
+  const nonce = randomBytes(16).toString('hex');
+  let authenticated = false;
+
+  const handshakeTimer = setTimeout(() => {
+    if (!authenticated) {
+      console.warn('[daemon] WebSocket handshake timeout — closing unauthenticated connection');
+      ws.close(1008, 'Handshake timeout');
+    }
+  }, HANDSHAKE_TIMEOUT_MS);
+
+  ws.send(JSON.stringify({ type: 'challenge', nonce }));
+
+  // ── Layer 3: Rate limiter (per connection) ──
+  const checkRate = makeRateLimiter();
+
+  console.log('[daemon] Plugin connecting (Safe Mode) — awaiting handshake');
+  resetIdleTimer();
 
   ws.on('message', (data) => {
-    resetIdleTimer(); // Plugin messages count as activity
+    resetIdleTimer();
+
+    // ── Layer 4: Message size guard (belt-and-suspenders over maxPayload) ──
+    if (data.length > MAX_BODY_BYTES) {
+      console.warn('[daemon] WebSocket message too large, dropping');
+      return;
+    }
+
     try {
       const msg = JSON.parse(data.toString());
 
-      if (msg.type === 'hello') {
-        console.log(`[daemon] Plugin version: ${msg.version}`);
+      // ── Handshake: must be first message ──
+      if (!authenticated) {
+        if (msg.type === 'hello' && typeof msg.nonce === 'string' && msg.nonce === nonce) {
+          authenticated = true;
+          clearTimeout(handshakeTimer);
+          pluginWs = ws;
+          console.log(`[daemon] Plugin authenticated (v${msg.version || 'unknown'})`);
+        } else {
+          console.warn('[daemon] WebSocket bad handshake — closing');
+          ws.close(1008, 'Authentication failed');
+        }
+        return; // hello is consumed; don't process further
+      }
+
+      // ── Rate limit all post-auth messages ──
+      if (!checkRate()) {
+        console.warn('[daemon] WebSocket rate limit exceeded — dropping message');
+        return;
       }
 
       if (msg.type === 'result') {

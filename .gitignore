@@ -1,6 +1,37 @@
-.DS_Store
-*.log
-DEV-NOTES.md
+# Dependencies
 node_modules/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime / temp
 .figma-client-*.mjs
 screenshot.png
+*.png
+!docs/**/*.png
+
+# Secrets — never commit these
+.env
+.env.*
+.daemon-token
+*.token
+
+# Build output
+dist/
+out/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Dev notes
+DEV-NOTES.md
+NOTES.md
+.claude/

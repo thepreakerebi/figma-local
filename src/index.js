@@ -17,6 +17,10 @@ import { isPatched, patchFigma, unpatchFigma, getFigmaCommand, getCdpPort, getFi
 import { listComponents, getComponent, getAllComponents, VISUAL_COMPONENTS } from './shadcn.js';
 import { listBlocks, getBlock } from './blocks/index.js';
 import {
+  STAGE1_METADATA, buildFrameStructureCode, buildUsedTokensCode, formatLeanContext
+} from './read.js';
+import { generatePrompt } from './prompt-templates.js';
+import {
   nullDevice, killPort, getPortPid, sleepAfterStop,
   startFigmaApp, killFigmaApp,
   getFigmaVersion, isFigmaRunning, platformName
@@ -5319,15 +5323,17 @@ return JSON.stringify({ theme: { extend: { colors } } }, null, 2);
     console.log(result);
   });
 
-// ============ VERIFY (AI Screenshot Check) ============
+// ============ VERIFY (AI Screenshot Check + Comparison Loop) ============
 
 program
   .command('verify [nodeId]')
-  .description('Take a small screenshot for AI verification (returns base64 or saves to file)')
+  .description('Take a small screenshot for AI verification. Use --compare to diff against a prototype URL.')
   .option('-s, --scale <number>', 'Export scale (default: 0.5 for small size)', '0.5')
   .option('--max <pixels>', 'Max dimension in pixels (default: 2000)', '2000')
   .option('--save [path]', 'Save as PNG file (default: /tmp/figma-verify-{id}.png)')
-  .action((nodeId, options) => {
+  .option('--compare <url>', 'Compare against a prototype/preview URL and generate correction prompts')
+  .option('--compare-save <path>', 'Save prototype screenshot to this path when using --compare')
+  .action(async (nodeId, options) => {
     checkConnection();
     const scale = parseFloat(options.scale);
     const maxDim = parseInt(options.max);
@@ -5341,7 +5347,6 @@ program
       if (!node) return { error: 'No node selected or found' };
       if (!('exportAsync' in node)) return { error: 'Node cannot be exported' };
 
-      // Calculate optimal scale to stay under max dimension
       const nodeWidth = node.width || 100;
       const nodeHeight = node.height || 100;
       let finalScale = ${scale};
@@ -5349,7 +5354,6 @@ program
       if (maxNodeDim * finalScale > ${maxDim}) {
         finalScale = ${maxDim} / maxNodeDim;
       }
-      // Ensure we don't exceed 8000px (API limit)
       if (maxNodeDim * finalScale > 7500) {
         finalScale = 7500 / maxNodeDim;
       }
@@ -5359,7 +5363,6 @@ program
         constraint: { type: 'SCALE', value: finalScale }
       });
 
-      // Convert to base64
       const base64 = figma.base64Encode(bytes);
 
       return {
@@ -5378,16 +5381,48 @@ program
       process.exit(1);
     }
 
-    // Save to file if --save option provided
-    if (options.save !== undefined) {
-      const safeId = result.id.replace(/:/g, '-');
+    // Save design screenshot always when --compare is used
+    const safeId = result.id.replace(/:/g, '-');
+
+    if (options.compare) {
+      // Save the Figma design screenshot for comparison
+      const designPath = `/tmp/figma-design-${safeId}.png`;
+      writeFileSync(designPath, Buffer.from(result.base64, 'base64'));
+
+      console.log(chalk.bold('\n## Verify — Comparison Mode'));
+      console.log(`Design screenshot saved: ${designPath}`);
+      console.log(`Prototype URL: ${options.compare}`);
+      console.log('');
+
+      // Output structured instructions for Claude to perform the visual comparison
+      // Claude Code has browser tools (mcp__Claude_in_Chrome) to screenshot the URL
+      console.log(JSON.stringify({
+        mode: 'compare',
+        designScreenshot: designPath,
+        designName: result.name,
+        designId: result.id,
+        designSize: `${result.width}x${result.height}`,
+        designBase64: result.base64,
+        prototypeUrl: options.compare,
+        instructions: [
+          `1. Navigate to the prototype URL: ${options.compare}`,
+          `2. Take a screenshot of the prototype`,
+          `3. Compare both images visually against the Figma design at: ${designPath}`,
+          `4. Check for: missing components, color mismatches, layout shifts, typography gaps, missing interactions`,
+          `5. Output a gap report with ready-to-paste correction prompts (one fix per prompt)`,
+        ],
+        gapReportTemplate: {
+          matches: '(list elements that match the design)',
+          gaps: '(table: element | issue | figma_value)',
+          correctionPrompts: '(array of focused single-fix prompts for the prototype tool)',
+        }
+      }));
+    } else if (options.save !== undefined) {
       const savePath = typeof options.save === 'string'
         ? options.save
         : `/tmp/figma-verify-${safeId}.png`;
 
-      const buffer = Buffer.from(result.base64, 'base64');
-      writeFileSync(savePath, buffer);
-
+      writeFileSync(savePath, Buffer.from(result.base64, 'base64'));
       console.log(JSON.stringify({
         name: result.name,
         id: result.id,
@@ -5396,7 +5431,6 @@ program
         saved: savePath
       }));
     } else {
-      // Output as JSON for easy parsing
       console.log(JSON.stringify({
         name: result.name,
         id: result.id,
@@ -8313,6 +8347,196 @@ blocksCmd
       spinner.succeed(`Created ${block.name} (${nodeId})`);
     } catch (e) {
       spinner.fail(`Failed to create ${block.name}: ${e.message}`);
+    }
+  });
+
+// ============ READ — staged lean design extraction ============
+
+program
+  .command('read [frameName]')
+  .description('Extract design info in lean structured format (staged, token-efficient)')
+  .option('--lean', 'Output compact text block instead of raw JSON (default: true)')
+  .option('--json', 'Output raw JSON instead of text block')
+  .option('--tokens', 'Include only used design tokens (skips structure)')
+  .option('--stage <n>', 'Run only stage 1 (metadata), 2 (structure), or 3 (tokens)', null)
+  .action(async (frameName, options) => {
+    checkConnection();
+    const spinner = ora('Reading design (stage 1: metadata)...').start();
+
+    try {
+      // Stage 1: metadata — always run, cheapest call
+      const metadata = await daemonExec('eval', { code: STAGE1_METADATA });
+
+      if (options.stage === '1') {
+        spinner.succeed('Stage 1 complete');
+        console.log(options.json ? JSON.stringify(metadata, null, 2) : formatStage1(metadata));
+        return;
+      }
+
+      // Resolve which frame to focus on
+      let targetFrame = null;
+      if (frameName) {
+        targetFrame = metadata.frames.find(f =>
+          f.name.toLowerCase().includes(frameName.toLowerCase())
+        );
+        if (!targetFrame) {
+          spinner.fail(`Frame "${frameName}" not found. Available frames:`);
+          metadata.frames.forEach(f => console.log(`  • ${f.name} (${f.w}x${f.h})`));
+          process.exit(1);
+        }
+      } else if (metadata.frames.length === 1) {
+        targetFrame = metadata.frames[0];
+      } else {
+        spinner.succeed('Stage 1 complete — multiple frames found');
+        console.log('\nAvailable frames (use read <frameName> to focus):');
+        metadata.frames.forEach(f => console.log(`  • ${f.name}  ${f.w}x${f.h}`));
+        console.log('\nOr: read "Frame Name" to extract structure + tokens for a specific frame.');
+        return;
+      }
+
+      // Stage 2: frame structure — only the target frame
+      spinner.text = `Stage 2: reading structure of "${targetFrame.name}"...`;
+      const frameStructure = await daemonExec('eval', { code: buildFrameStructureCode(targetFrame.id) });
+
+      if (options.stage === '2') {
+        spinner.succeed('Stage 2 complete');
+        console.log(options.json ? JSON.stringify(frameStructure, null, 2) : JSON.stringify(frameStructure, null, 2));
+        return;
+      }
+
+      if (options.tokens) {
+        // Skip to stage 3 only
+        spinner.text = 'Stage 3: extracting used tokens only...';
+        const tokens = await daemonExec('eval', { code: buildUsedTokensCode(targetFrame.id) });
+        spinner.succeed(`Stage 3 complete — ${Object.keys(tokens).length} tokens used in this frame`);
+        console.log(options.json ? JSON.stringify(tokens, null, 2) : formatTokensOnly(tokens));
+        return;
+      }
+
+      // Stage 3: used tokens — parallel with structure already done
+      spinner.text = 'Stage 3: extracting used tokens...';
+      const tokens = await daemonExec('eval', { code: buildUsedTokensCode(targetFrame.id) });
+
+      spinner.succeed(`Read complete — ${targetFrame.name}`);
+      console.log('');
+
+      // Format and output
+      if (options.json) {
+        console.log(JSON.stringify({ metadata, frame: frameStructure, tokens }, null, 2));
+      } else {
+        // Default: lean text block
+        const ctx = formatLeanContext(metadata, frameStructure, tokens, targetFrame.name);
+        console.log(ctx);
+      }
+    } catch (e) {
+      spinner.fail(`Read failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
+function formatStage1(metadata) {
+  const lines = [`Page: ${metadata.page}`, `Frames: ${metadata.frameCount}`, ''];
+  metadata.frames.forEach(f => lines.push(`  • ${f.name}  ${f.w}x${f.h}  [${f.type}]`));
+  return lines.join('\n');
+}
+
+function formatTokensOnly(tokens) {
+  const keys = Object.keys(tokens);
+  if (keys.length === 0) return 'No variable bindings found in this frame.';
+  return `Design tokens used in this frame (${keys.length}):\n` +
+    keys.map(k => `  ${k}: ${tokens[k]}`).join('\n');
+}
+
+// ============ PROMPT — export to AI tool ============
+
+program
+  .command('prompt [frameName]')
+  .description('Generate a lean, tool-specific AI prompt from a Figma frame')
+  .option('-t, --target <tool>', 'Target tool: figma-make | lovable | pencil | paper | stitch', 'figma-make')
+  .option('-p, --platform <platform>', 'desktop | mobile | responsive', 'desktop')
+  .option('-s, --stack <stack>', 'Tech stack (for Lovable/Pencil)', 'React + shadcn/ui + Tailwind')
+  .option('-g, --goal <text>', 'What the user should be able to DO on this screen')
+  .option('--guardrails <text>', 'What the AI must not change or assume')
+  .option('--interactions <list>', 'Comma-separated list of interactions (e.g. "button opens modal, tab switches content")')
+  .option('--save <path>', 'Save prompt to file instead of printing')
+  .action(async (frameName, options) => {
+    checkConnection();
+    const spinner = ora(`Reading design for "${frameName || 'current frame'}"...`).start();
+
+    try {
+      // Stage 1
+      const metadata = await daemonExec('eval', { code: STAGE1_METADATA });
+
+      // Resolve frame
+      let targetFrame = null;
+      if (frameName) {
+        targetFrame = metadata.frames.find(f =>
+          f.name.toLowerCase().includes(frameName.toLowerCase())
+        );
+        if (!targetFrame) {
+          spinner.fail(`Frame "${frameName}" not found.`);
+          metadata.frames.forEach(f => console.log(`  • ${f.name}`));
+          process.exit(1);
+        }
+      } else if (metadata.frames.length === 1) {
+        targetFrame = metadata.frames[0];
+      } else {
+        spinner.fail('Multiple frames found — specify a frame name: prompt "Frame Name" --target figma-make');
+        metadata.frames.forEach(f => console.log(`  • ${f.name}`));
+        process.exit(1);
+      }
+
+      // Stage 2 + 3 in parallel
+      spinner.text = 'Extracting structure and tokens...';
+      const [frameStructure, tokens] = await Promise.all([
+        daemonExec('eval', { code: buildFrameStructureCode(targetFrame.id) }),
+        daemonExec('eval', { code: buildUsedTokensCode(targetFrame.id) })
+      ]);
+
+      spinner.succeed('Design read — generating prompt...');
+
+      // Format structure as compact text
+      const { formatLeanContext: _unused, ...rest } = await import('./read.js');
+      // Use a minimal structure summary for the prompt
+      const structureLines = [];
+      function summarise(node, depth) {
+        if (depth > 3) return;
+        const indent = '  '.repeat(depth);
+        let line = `${indent}[${node.type}] ${node.name}`;
+        if (node.text) line += ` "${node.text.slice(0, 30)}${node.text.length > 30 ? '…' : ''}"`;
+        if (node.component) line += ` → ${node.component}`;
+        structureLines.push(line);
+        if (node.children) node.children.forEach(c => summarise(c, depth + 1));
+      }
+      if (frameStructure && !frameStructure.error) summarise(frameStructure, 0);
+
+      const interactions = options.interactions
+        ? options.interactions.split(',').map(s => s.trim())
+        : [];
+
+      const prompt = generatePrompt(options.target, {
+        frameName: targetFrame.name,
+        page: metadata.page,
+        size: `${targetFrame.w}x${targetFrame.h}`,
+        structure: structureLines.join('\n'),
+        tokens,
+        interactions,
+      }, {
+        platform: options.platform,
+        stack: options.stack,
+        goal: options.goal || '',
+        guardrails: options.guardrails || '',
+      });
+
+      if (options.save) {
+        writeFileSync(options.save, prompt, 'utf8');
+        console.log(chalk.green(`✓ Prompt saved to ${options.save}`));
+      } else {
+        console.log('\n' + prompt);
+      }
+    } catch (e) {
+      spinner.fail(`Prompt generation failed: ${e.message}`);
+      process.exit(1);
     }
   });
 
