@@ -54,13 +54,13 @@ Gives you `fig` and `fig-start` globally on your PATH.
 ### curl (one-line)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/elvke/figma-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/thepreakerebi/figma-cli/main/install.sh | bash
 ```
 
 ### Homebrew
 
 ```bash
-brew tap elvke/figma-cli
+brew tap thepreakerebi/figma-cli
 brew install figma-cli
 ```
 
@@ -73,7 +73,7 @@ npx figma-cli read
 ### From source
 
 ```bash
-git clone https://github.com/elvke/figma-cli.git
+git clone https://github.com/thepreakerebi/figma-cli.git
 cd figma-cli
 npm install && npm install -g .
 ```
@@ -320,7 +320,7 @@ Remove the plugin in Figma: Plugins → Development → right-click FigCli → R
 Issues and PRs welcome. For major changes, open an issue first to discuss.
 
 ```bash
-git clone https://github.com/elvke/figma-cli.git
+git clone https://github.com/thepreakerebi/figma-cli.git
 cd figma-cli
 npm install
 node src/index.js --help

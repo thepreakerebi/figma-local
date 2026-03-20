@@ -1,6 +1,6 @@
 class FigmaCli < Formula
   desc "Control Figma Desktop with Claude Code — design tokens, components, AI prompt export"
-  homepage "https://github.com/elvke/figma-cli"
+  homepage "https://github.com/thepreakerebi/figma-cli"
   url "https://registry.npmjs.org/figma-cli/-/figma-cli-1.0.0.tgz"
   sha256 "" # filled in on release
   license "MIT"

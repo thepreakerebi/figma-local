@@ -1,10 +1,10 @@
 #!/bin/bash
 # figma-cli — one-line installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/elvke/figma-cli/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/thepreakerebi/figma-cli/main/install.sh | bash
 
 set -e
 
-REPO="elvke/figma-cli"
+REPO="thepreakerebi/figma-cli"
 INSTALL_DIR="$HOME/.figma-cli"
 BIN_DIR="/usr/local/bin"
 

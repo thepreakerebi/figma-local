@@ -25,11 +25,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/elvke/figma-cli.git"
+    "url": "git+https://github.com/thepreakerebi/figma-cli.git"
   },
-  "homepage": "https://github.com/elvke/figma-cli",
+  "homepage": "https://github.com/thepreakerebi/figma-cli",
   "bugs": {
-    "url": "https://github.com/elvke/figma-cli/issues"
+    "url": "https://github.com/thepreakerebi/figma-cli/issues"
   },
   "scripts": {
     "setup-alias": "bash bin/setup-alias.sh",
