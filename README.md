@@ -2,7 +2,7 @@
 
 > Control Figma Desktop with Claude Code. Design tokens, shadcn/ui components, AI prompt export, lint, and more — no API key required.
 
-[![npm version](https://img.shields.io/npm/v/figma-cli.svg)](https://www.npmjs.com/package/figma-cli)
+[![npm version](https://img.shields.io/npm/v/@jetro/figcli.svg)](https://www.npmjs.com/package/@jetro/figcli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen)](https://nodejs.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-blue)](#)
@@ -46,7 +46,7 @@ This project is built on the shoulders of two excellent open-source works:
 ### npm (recommended)
 
 ```bash
-npm install -g figma-cli
+npm install -g @jetro/figcli
 ```
 
 Gives you `fig` and `fig-start` globally on your PATH.
@@ -67,7 +67,7 @@ brew install figma-cli
 ### npx (no install)
 
 ```bash
-npx figma-cli read
+npx @jetro/figcli read
 ```
 
 ### From source
@@ -97,7 +97,7 @@ npm install && npm install -g .
 
 1. Open **Figma Desktop**
 2. Hamburger menu → **Plugins → Development → Import plugin from manifest...**
-3. Navigate to the `plugin/` folder in this repo (or `$(npm root -g)/figma-cli/plugin/`)
+3. Navigate to the `plugin/` folder in this repo (or `$(npm root -g)/figcli/plugin/`)
 4. Select `manifest.json` → click **Open**
 5. Right-click **FigCli** in the plugin list → **Add to toolbar**
 
@@ -290,7 +290,7 @@ fig-start --safe --here     # launch from your project dir; Claude sees both you
 
 ```bash
 # Install once per machine
-npm install -g figma-cli
+npm install -g @jetro/figcli
 
 # Import the Figma plugin once per Figma account (5 minutes)
 # Then every designer on the team has identical fig commands
@@ -299,7 +299,7 @@ npm install -g figma-cli
 Pin a version for consistency:
 
 ```bash
-npm install -g figma-cli@1.0.0
+npm install -g @jetro/@jetro/figcli@1.0.0
 ```
 
 ---
@@ -307,7 +307,7 @@ npm install -g figma-cli@1.0.0
 ## Uninstall
 
 ```bash
-npm uninstall -g figma-cli
+npm uninstall -g @jetro/figcli
 rm -rf ~/.figma-cli ~/.figma-ds-cli
 ```
 
