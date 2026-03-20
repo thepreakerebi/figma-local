@@ -8796,33 +8796,49 @@ const INSPECT_CODE = `(function() {
   return { count: sel.length, specs: results };
 })()`;
 
+function buildInspectCodeForNode(nodeId) {
+  return INSPECT_CODE.replace(
+    "var sel = figma.currentPage.selection;\n  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select a frame, component, or layer in Figma first.' };",
+    `var targetNode = figma.getNodeById('${nodeId}');\n  if (!targetNode) return { error: 'Node ${nodeId} not found.' };\n  var sel = [targetNode];`
+  );
+}
+
+function parseNodeIdFromLink(url) {
+  const match = url.match(/node-id=([0-9]+-[0-9]+|[0-9]+:[0-9]+|[0-9]+%3A[0-9]+)/i);
+  if (!match) return null;
+  return decodeURIComponent(match[1]).replace('-', ':');
+}
+
 program
   .command('inspect')
   .description('Get detailed design specs for the selected element — spacing, colors, typography, effects (all in px and rem)')
   .option('--json', 'Output raw JSON')
   .option('--node <id>', 'Inspect a specific node by ID instead of selection')
+  .option('--link <url>', 'Inspect a node from a Figma selection link')
+  .option('--deep', 'Also inspect all children recursively (useful for components)')
   .addHelpText('after', `
 Examples:
-  fig inspect                  Inspect what you have selected in Figma
-  fig inspect --node "123:456" Inspect a specific node by ID
-  fig inspect --json           Output raw JSON for programmatic use
-
-Returns dimensions, spacing (padding/gap), colors (hex + rgba), typography
-(font, size, weight, line-height, letter-spacing), border radius, strokes,
-shadows, opacity, variable bindings — all in px and rem.
+  fig inspect                       Inspect what you have selected in Figma
+  fig inspect --node "123:456"      Inspect a specific node by ID
+  fig inspect --link "https://..."  Inspect from a Figma selection link
+  fig inspect --deep                Inspect selection + all children
+  fig inspect --json                Output raw JSON for programmatic use
 `)
   .action(async (options) => {
     checkConnection();
-    const spinner = ora('Inspecting selection...').start();
+    const spinner = ora('Inspecting...').start();
 
     try {
       let code = INSPECT_CODE;
-      if (options.node) {
-        // Replace selection logic with getNodeById
-        code = INSPECT_CODE.replace(
-          "var sel = figma.currentPage.selection;\n  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select a frame, component, or layer in Figma first.' };",
-          `var targetNode = figma.getNodeById('${options.node}');\n  if (!targetNode) return { error: 'Node ${options.node} not found.' };\n  var sel = [targetNode];`
-        );
+      if (options.link) {
+        const nodeId = parseNodeIdFromLink(options.link);
+        if (!nodeId) {
+          spinner.fail('Could not find a node ID in that link. Copy via right-click → "Copy link to selection" in Figma.');
+          process.exit(1);
+        }
+        code = buildInspectCodeForNode(nodeId);
+      } else if (options.node) {
+        code = buildInspectCodeForNode(options.node);
       }
 
       const result = await daemonExec('eval', { code });
@@ -8832,7 +8848,35 @@ shadows, opacity, variable bindings — all in px and rem.
         process.exit(1);
       }
 
-      spinner.succeed(`Inspected ${result.count} element${result.count > 1 ? 's' : ''}`);
+      // If --deep, also inspect all children
+      if (options.deep && result.specs.length > 0 && result.specs[0].children) {
+        spinner.text = 'Inspecting children...';
+        for (const child of result.specs[0].children) {
+          // We need the child's node ID — get it from the parent
+          // Use a separate eval to get child IDs
+        }
+        // Collect child node IDs from the parent
+        const parentName = result.specs[0].name;
+        const childIdsCode = `(function() {
+          var sel = figma.currentPage.selection;
+          var node = sel && sel.length > 0 ? sel[0] : null;
+          ${options.node ? `node = figma.getNodeById('${options.node}');` : ''}
+          ${options.link ? `node = figma.getNodeById('${parseNodeIdFromLink(options.link)}');` : ''}
+          if (!node || !node.children) return [];
+          return node.children.slice(0, 30).map(function(c) { return c.id; });
+        })()`;
+        const childIds = await daemonExec('eval', { code: childIdsCode });
+        if (Array.isArray(childIds)) {
+          for (const cid of childIds) {
+            const childResult = await daemonExec('eval', { code: buildInspectCodeForNode(cid) });
+            if (childResult && childResult.specs) {
+              result.specs.push(...childResult.specs);
+            }
+          }
+        }
+      }
+
+      spinner.succeed(`Inspected ${result.specs.length} element${result.specs.length > 1 ? 's' : ''}`);
 
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -8984,6 +9028,619 @@ function formatInspectSpec(spec) {
 
   return lines.join('\n');
 }
+
+// ============ CSS — generate CSS from selection ============
+
+const CSS_GEN_CODE = `(function() {
+  var sel = figma.currentPage.selection;
+  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select an element in Figma first.' };
+
+  var BASE = 16;
+  function rem(px) { return parseFloat((px / BASE).toFixed(3)); }
+  function colorHex(c) {
+    var r = Math.round((c.r||0)*255), g = Math.round((c.g||0)*255), b = Math.round((c.b||0)*255);
+    return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + b.toString(16).padStart(2,'0');
+  }
+  function colorRgba(c, a) {
+    var r = Math.round((c.r||0)*255), g = Math.round((c.g||0)*255), b = Math.round((c.b||0)*255);
+    if (a !== undefined && a < 1) return 'rgba(' + r + ',' + g + ',' + b + ',' + parseFloat(a.toFixed(2)) + ')';
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function genCSS(node, unit) {
+    var props = {};
+    var tw = [];
+
+    // Dimensions
+    if (node.width !== undefined) {
+      props['width'] = unit === 'rem' ? rem(node.width) + 'rem' : Math.round(node.width) + 'px';
+      props['height'] = unit === 'rem' ? rem(node.height) + 'rem' : Math.round(node.height) + 'px';
+    }
+
+    // Layout
+    if (node.layoutMode && node.layoutMode !== 'NONE') {
+      props['display'] = 'flex';
+      props['flex-direction'] = node.layoutMode === 'HORIZONTAL' ? 'row' : 'column';
+      if (node.itemSpacing) props['gap'] = unit === 'rem' ? rem(node.itemSpacing) + 'rem' : node.itemSpacing + 'px';
+
+      var pt = node.paddingTop || 0, pr = node.paddingRight || 0, pb = node.paddingBottom || 0, pl = node.paddingLeft || 0;
+      if (pt || pr || pb || pl) {
+        if (pt === pr && pr === pb && pb === pl) {
+          props['padding'] = unit === 'rem' ? rem(pt) + 'rem' : pt + 'px';
+        } else if (pt === pb && pl === pr) {
+          props['padding'] = (unit === 'rem' ? rem(pt) + 'rem ' + rem(pr) + 'rem' : pt + 'px ' + pr + 'px');
+        } else {
+          props['padding'] = unit === 'rem'
+            ? rem(pt) + 'rem ' + rem(pr) + 'rem ' + rem(pb) + 'rem ' + rem(pl) + 'rem'
+            : pt + 'px ' + pr + 'px ' + pb + 'px ' + pl + 'px';
+        }
+      }
+
+      var mainMap = { MIN: 'flex-start', CENTER: 'center', MAX: 'flex-end', SPACE_BETWEEN: 'space-between' };
+      var crossMap = { MIN: 'flex-start', CENTER: 'center', MAX: 'flex-end' };
+      if (node.primaryAxisAlignItems && node.primaryAxisAlignItems !== 'MIN') {
+        props['justify-content'] = mainMap[node.primaryAxisAlignItems] || node.primaryAxisAlignItems;
+      }
+      if (node.counterAxisAlignItems && node.counterAxisAlignItems !== 'MIN') {
+        props['align-items'] = crossMap[node.counterAxisAlignItems] || node.counterAxisAlignItems;
+      }
+      if (node.layoutWrap === 'WRAP') props['flex-wrap'] = 'wrap';
+    }
+
+    // Border radius
+    if (node.cornerRadius && node.cornerRadius !== 0 && typeof node.cornerRadius === 'number') {
+      if (node.cornerRadius >= 9999) {
+        props['border-radius'] = '9999px';
+      } else {
+        props['border-radius'] = unit === 'rem' ? rem(node.cornerRadius) + 'rem' : node.cornerRadius + 'px';
+      }
+    }
+    if (node.topLeftRadius || node.topRightRadius || node.bottomRightRadius || node.bottomLeftRadius) {
+      var tl = node.topLeftRadius||0, tr = node.topRightRadius||0, br = node.bottomRightRadius||0, bl = node.bottomLeftRadius||0;
+      if (tl === tr && tr === br && br === bl) {
+        props['border-radius'] = unit === 'rem' ? rem(tl) + 'rem' : tl + 'px';
+      } else {
+        props['border-radius'] = unit === 'rem'
+          ? rem(tl) + 'rem ' + rem(tr) + 'rem ' + rem(br) + 'rem ' + rem(bl) + 'rem'
+          : tl + 'px ' + tr + 'px ' + br + 'px ' + bl + 'px';
+      }
+    }
+
+    // Fills
+    if (node.fills && node.fills.length > 0) {
+      for (var i = 0; i < node.fills.length; i++) {
+        var f = node.fills[i];
+        if (f.visible === false) continue;
+        if (f.type === 'SOLID' && f.color) {
+          var opacity = f.opacity !== undefined ? f.opacity : 1;
+          props['background-color'] = opacity < 1 ? colorRgba(f.color, opacity) : colorHex(f.color);
+          break;
+        }
+        if (f.type === 'GRADIENT_LINEAR' && f.gradientStops) {
+          var stops = f.gradientStops.map(function(s) { return colorHex(s.color) + ' ' + Math.round(s.position*100) + '%'; });
+          props['background'] = 'linear-gradient(' + stops.join(', ') + ')';
+          break;
+        }
+      }
+    }
+
+    // Strokes
+    if (node.strokes && node.strokes.length > 0) {
+      for (var i = 0; i < node.strokes.length; i++) {
+        var s = node.strokes[i];
+        if (s.visible === false) continue;
+        if (s.type === 'SOLID' && s.color) {
+          var sw = node.strokeWeight || 1;
+          props['border'] = (unit === 'rem' ? rem(sw) + 'rem' : sw + 'px') + ' solid ' + colorHex(s.color);
+          break;
+        }
+      }
+    }
+
+    // Typography
+    if (node.type === 'TEXT') {
+      if (node.fontName && node.fontName !== figma.mixed) {
+        props['font-family'] = "'" + node.fontName.family + "', sans-serif";
+      }
+      if (node.fontSize && node.fontSize !== figma.mixed) {
+        props['font-size'] = unit === 'rem' ? rem(node.fontSize) + 'rem' : node.fontSize + 'px';
+      }
+      if (node.fontName && node.fontName !== figma.mixed && node.fontName.style) {
+        var style = node.fontName.style.toLowerCase();
+        if (style.includes('bold') || style.includes('700')) props['font-weight'] = 'bold';
+        else if (style.includes('semibold') || style.includes('600')) props['font-weight'] = '600';
+        else if (style.includes('medium') || style.includes('500')) props['font-weight'] = '500';
+        else if (style.includes('light') || style.includes('300')) props['font-weight'] = '300';
+        if (style.includes('italic')) props['font-style'] = 'italic';
+      }
+      if (node.lineHeight && node.lineHeight !== figma.mixed) {
+        if (node.lineHeight.unit === 'PIXELS') {
+          props['line-height'] = unit === 'rem' ? rem(node.lineHeight.value) + 'rem' : node.lineHeight.value + 'px';
+        } else if (node.lineHeight.unit === 'PERCENT') {
+          props['line-height'] = (node.lineHeight.value / 100).toFixed(2);
+        }
+      }
+      if (node.letterSpacing && node.letterSpacing !== figma.mixed) {
+        if (node.letterSpacing.unit === 'PIXELS' && node.letterSpacing.value !== 0) {
+          props['letter-spacing'] = unit === 'rem' ? rem(node.letterSpacing.value) + 'rem' : node.letterSpacing.value + 'px';
+        } else if (node.letterSpacing.unit === 'PERCENT' && node.letterSpacing.value !== 0) {
+          props['letter-spacing'] = (node.letterSpacing.value / 100).toFixed(3) + 'em';
+        }
+      }
+      if (node.textAlignHorizontal) {
+        var alignMap = { LEFT: 'left', CENTER: 'center', RIGHT: 'right', JUSTIFIED: 'justify' };
+        if (alignMap[node.textAlignHorizontal] && node.textAlignHorizontal !== 'LEFT') {
+          props['text-align'] = alignMap[node.textAlignHorizontal];
+        }
+      }
+      // Text fill color
+      if (node.fills && node.fills.length > 0) {
+        var tf = node.fills[0];
+        if (tf.type === 'SOLID' && tf.color && tf.visible !== false) {
+          props['color'] = colorHex(tf.color);
+          delete props['background-color'];
+        }
+      }
+    }
+
+    // Effects
+    if (node.effects && node.effects.length > 0) {
+      var shadows = [];
+      for (var i = 0; i < node.effects.length; i++) {
+        var e = node.effects[i];
+        if (e.visible === false) continue;
+        if (e.type === 'DROP_SHADOW') {
+          var ox = unit === 'rem' ? rem(e.offset.x) + 'rem' : e.offset.x + 'px';
+          var oy = unit === 'rem' ? rem(e.offset.y) + 'rem' : e.offset.y + 'px';
+          var bl = unit === 'rem' ? rem(e.radius) + 'rem' : e.radius + 'px';
+          var sp = unit === 'rem' ? rem(e.spread||0) + 'rem' : (e.spread||0) + 'px';
+          shadows.push(ox + ' ' + oy + ' ' + bl + ' ' + sp + ' ' + (e.color ? colorRgba(e.color, e.color.a) : ''));
+        }
+        if (e.type === 'INNER_SHADOW') {
+          var ox = unit === 'rem' ? rem(e.offset.x) + 'rem' : e.offset.x + 'px';
+          var oy = unit === 'rem' ? rem(e.offset.y) + 'rem' : e.offset.y + 'px';
+          var bl = unit === 'rem' ? rem(e.radius) + 'rem' : e.radius + 'px';
+          var sp = unit === 'rem' ? rem(e.spread||0) + 'rem' : (e.spread||0) + 'px';
+          shadows.push('inset ' + ox + ' ' + oy + ' ' + bl + ' ' + sp + ' ' + (e.color ? colorRgba(e.color, e.color.a) : ''));
+        }
+      }
+      if (shadows.length > 0) props['box-shadow'] = shadows.join(', ');
+    }
+
+    // Opacity
+    if (node.opacity !== undefined && node.opacity < 1) {
+      props['opacity'] = parseFloat(node.opacity.toFixed(2));
+    }
+
+    // Overflow
+    if (node.clipsContent) props['overflow'] = 'hidden';
+
+    return { name: node.name, type: node.type, css: props, text: node.type === 'TEXT' ? node.characters : undefined };
+  }
+
+  var results = [];
+  var count = Math.min(sel.length, 10);
+  for (var i = 0; i < count; i++) {
+    results.push(genCSS(sel[i], 'rem'));
+  }
+  return { count: sel.length, nodes: results };
+})()`;
+
+program
+  .command('css')
+  .description('Generate CSS from the selected element — ready to paste into your codebase')
+  .option('--px', 'Use px units instead of rem (default: rem)')
+  .option('--tailwind', 'Output Tailwind classes instead of CSS')
+  .option('--json', 'Output raw JSON')
+  .option('--node <id>', 'Target a specific node by ID')
+  .option('--link <url>', 'Target a node from a Figma selection link')
+  .addHelpText('after', `
+Examples:
+  fig css                     CSS for current selection (rem units)
+  fig css --px                CSS in px units
+  fig css --tailwind          Tailwind classes
+  fig css --link "https://..."  CSS from a Figma link
+`)
+  .action(async (options) => {
+    checkConnection();
+    const spinner = ora('Generating CSS...').start();
+
+    try {
+      let code = CSS_GEN_CODE;
+      const unit = options.px ? 'px' : 'rem';
+      code = code.replace("genCSS(sel[i], 'rem')", `genCSS(sel[i], '${unit}')`);
+
+      if (options.link) {
+        const nodeId = parseNodeIdFromLink(options.link);
+        if (!nodeId) { spinner.fail('Could not find a node ID in that link.'); process.exit(1); }
+        code = code.replace(
+          "var sel = figma.currentPage.selection;\n  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select an element in Figma first.' };",
+          `var n = figma.getNodeById('${nodeId}'); if (!n) return { error: 'Node not found.' }; var sel = [n];`
+        );
+      } else if (options.node) {
+        code = code.replace(
+          "var sel = figma.currentPage.selection;\n  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select an element in Figma first.' };",
+          `var n = figma.getNodeById('${options.node}'); if (!n) return { error: 'Node not found.' }; var sel = [n];`
+        );
+      }
+
+      const result = await daemonExec('eval', { code });
+
+      if (result.error) { spinner.fail(result.error); process.exit(1); }
+
+      spinner.succeed(`Generated CSS for ${result.nodes.length} element${result.nodes.length > 1 ? 's' : ''}`);
+      console.log('');
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      for (const node of result.nodes) {
+        if (options.tailwind) {
+          console.log(formatTailwind(node));
+        } else {
+          console.log(formatCSS(node));
+        }
+        console.log('');
+      }
+    } catch (e) {
+      spinner.fail(`CSS generation failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
+function formatCSS(node) {
+  const lines = [];
+  const className = node.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  lines.push(chalk.gray(`/* ${node.name} [${node.type}] */`));
+  lines.push(`.${className} {`);
+  for (const [prop, val] of Object.entries(node.css)) {
+    lines.push(`  ${prop}: ${val};`);
+  }
+  lines.push('}');
+  if (node.text) {
+    lines.push(chalk.gray(`/* Content: "${node.text.slice(0, 60)}${node.text.length > 60 ? '...' : ''}" */`));
+  }
+  return lines.join('\n');
+}
+
+function formatTailwind(node) {
+  const css = node.css;
+  const classes = [];
+
+  // Width/height
+  if (css['width']) classes.push(`w-[${css['width']}]`);
+  if (css['height']) classes.push(`h-[${css['height']}]`);
+
+  // Display + flex
+  if (css['display'] === 'flex') {
+    classes.push('flex');
+    if (css['flex-direction'] === 'column') classes.push('flex-col');
+    if (css['flex-wrap'] === 'wrap') classes.push('flex-wrap');
+  }
+
+  // Gap
+  if (css['gap']) classes.push(`gap-[${css['gap']}]`);
+
+  // Padding
+  if (css['padding']) {
+    const parts = css['padding'].split(' ');
+    if (parts.length === 1) classes.push(`p-[${parts[0]}]`);
+    else if (parts.length === 2) { classes.push(`py-[${parts[0]}]`); classes.push(`px-[${parts[1]}]`); }
+    else if (parts.length === 4) { classes.push(`pt-[${parts[0]}]`); classes.push(`pr-[${parts[1]}]`); classes.push(`pb-[${parts[2]}]`); classes.push(`pl-[${parts[3]}]`); }
+  }
+
+  // Alignment
+  if (css['justify-content']) {
+    const map = { 'flex-start': 'justify-start', 'center': 'justify-center', 'flex-end': 'justify-end', 'space-between': 'justify-between' };
+    classes.push(map[css['justify-content']] || `justify-[${css['justify-content']}]`);
+  }
+  if (css['align-items']) {
+    const map = { 'flex-start': 'items-start', 'center': 'items-center', 'flex-end': 'items-end' };
+    classes.push(map[css['align-items']] || `items-[${css['align-items']}]`);
+  }
+
+  // Border radius
+  if (css['border-radius']) {
+    if (css['border-radius'] === '9999px') classes.push('rounded-full');
+    else classes.push(`rounded-[${css['border-radius']}]`);
+  }
+
+  // Background
+  if (css['background-color']) classes.push(`bg-[${css['background-color']}]`);
+
+  // Border
+  if (css['border']) classes.push(`border-[${css['border'].split(' solid ')[0]}]`, `border-[${css['border'].split(' solid ')[1] || ''}]`);
+
+  // Typography
+  if (css['font-size']) classes.push(`text-[${css['font-size']}]`);
+  if (css['font-weight']) {
+    const map = { 'bold': 'font-bold', '600': 'font-semibold', '500': 'font-medium', '300': 'font-light' };
+    classes.push(map[css['font-weight']] || `font-[${css['font-weight']}]`);
+  }
+  if (css['font-style'] === 'italic') classes.push('italic');
+  if (css['line-height']) classes.push(`leading-[${css['line-height']}]`);
+  if (css['letter-spacing']) classes.push(`tracking-[${css['letter-spacing']}]`);
+  if (css['text-align']) {
+    const map = { 'center': 'text-center', 'right': 'text-right', 'justify': 'text-justify' };
+    classes.push(map[css['text-align']] || `text-${css['text-align']}`);
+  }
+  if (css['color']) classes.push(`text-[${css['color']}]`);
+
+  // Shadow
+  if (css['box-shadow']) classes.push(`shadow-[${css['box-shadow'].replace(/\s+/g, '_')}]`);
+
+  // Opacity
+  if (css['opacity']) classes.push(`opacity-[${css['opacity']}]`);
+
+  // Overflow
+  if (css['overflow'] === 'hidden') classes.push('overflow-hidden');
+
+  const lines = [];
+  lines.push(chalk.gray(`{/* ${node.name} */}`));
+  lines.push(`className="${classes.join(' ')}"`);
+  if (node.text) lines.push(chalk.gray(`{/* "${node.text.slice(0, 60)}${node.text.length > 60 ? '...' : ''}" */}`));
+  return lines.join('\n');
+}
+
+// ============ MEASURE — spacing between elements ============
+
+program
+  .command('measure')
+  .description('Measure spacing between two selected elements — select exactly 2 layers in Figma')
+  .option('--json', 'Output raw JSON')
+  .action(async (options) => {
+    checkConnection();
+    const spinner = ora('Measuring spacing...').start();
+
+    try {
+      const code = `(function() {
+        var sel = figma.currentPage.selection;
+        if (!sel || sel.length < 2) return { error: 'Select exactly 2 elements in Figma to measure the spacing between them.' };
+        var a = sel[0], b = sel[1];
+        var BASE = 16;
+        function rem(px) { return parseFloat((px / BASE).toFixed(3)); }
+
+        var ax = a.absoluteTransform ? a.absoluteTransform[0][2] : a.x;
+        var ay = a.absoluteTransform ? a.absoluteTransform[1][2] : a.y;
+        var bx = b.absoluteTransform ? b.absoluteTransform[0][2] : b.x;
+        var by = b.absoluteTransform ? b.absoluteTransform[1][2] : b.y;
+        var aw = a.width, ah = a.height;
+        var bw = b.width, bh = b.height;
+
+        var hGap = 0, vGap = 0;
+        // Horizontal gap
+        if (bx >= ax + aw) hGap = bx - (ax + aw);
+        else if (ax >= bx + bw) hGap = ax - (bx + bw);
+        // Vertical gap
+        if (by >= ay + ah) vGap = by - (ay + ah);
+        else if (ay >= by + bh) vGap = ay - (by + bh);
+
+        return {
+          a: { name: a.name, x: Math.round(ax), y: Math.round(ay), w: Math.round(aw), h: Math.round(ah) },
+          b: { name: b.name, x: Math.round(bx), y: Math.round(by), w: Math.round(bw), h: Math.round(bh) },
+          spacing: {
+            horizontal: { px: Math.round(hGap), rem: rem(hGap) },
+            vertical: { px: Math.round(vGap), rem: rem(vGap) }
+          },
+          centerDistance: {
+            x: { px: Math.round(Math.abs((bx + bw/2) - (ax + aw/2))), rem: rem(Math.abs((bx + bw/2) - (ax + aw/2))) },
+            y: { px: Math.round(Math.abs((by + bh/2) - (ay + ah/2))), rem: rem(Math.abs((by + bh/2) - (ay + ah/2))) }
+          }
+        };
+      })()`;
+
+      const result = await daemonExec('eval', { code });
+      if (result.error) { spinner.fail(result.error); process.exit(1); }
+
+      spinner.succeed(`Measured: "${result.a.name}" ↔ "${result.b.name}"`);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log('');
+        console.log(chalk.bold(`${result.a.name}`) + chalk.gray(` (${result.a.w}x${result.a.h})`));
+        console.log(chalk.gray('  ↕'));
+        console.log(chalk.bold(`${result.b.name}`) + chalk.gray(` (${result.b.w}x${result.b.h})`));
+        console.log('');
+        console.log(chalk.cyan('Spacing'));
+        console.log(`  Horizontal: ${result.spacing.horizontal.px}px (${result.spacing.horizontal.rem}rem)`);
+        console.log(`  Vertical:   ${result.spacing.vertical.px}px (${result.spacing.vertical.rem}rem)`);
+        console.log(chalk.cyan('Center-to-center'));
+        console.log(`  X: ${result.centerDistance.x.px}px (${result.centerDistance.x.rem}rem)`);
+        console.log(`  Y: ${result.centerDistance.y.px}px (${result.centerDistance.y.rem}rem)`);
+      }
+    } catch (e) {
+      spinner.fail(`Measure failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============ STYLES — extract unique styles from a frame ============
+
+program
+  .command('styles [frameName]')
+  .description('Extract all unique text styles, colors, and spacing values from a frame — a mini style guide')
+  .option('--json', 'Output raw JSON')
+  .option('--selection', 'Extract styles from current selection instead of a named frame')
+  .option('--link <url>', 'Extract styles from a Figma selection link')
+  .addHelpText('after', `
+Examples:
+  fig styles "Login Screen"    All text styles, colors, spacing in that frame
+  fig styles --selection       Styles from the current selection
+  fig styles --json            Raw JSON output
+`)
+  .action(async (frameName, options) => {
+    checkConnection();
+    const spinner = ora('Extracting styles...').start();
+
+    try {
+      let nodeSelector;
+      if (options.selection) {
+        nodeSelector = `var sel = figma.currentPage.selection; if (!sel || sel.length === 0) return { error: 'Nothing selected.' }; var root = sel[0];`;
+      } else if (options.link) {
+        const nodeId = parseNodeIdFromLink(options.link);
+        if (!nodeId) { spinner.fail('Could not find a node ID in that link.'); process.exit(1); }
+        nodeSelector = `var root = figma.getNodeById('${nodeId}'); if (!root) return { error: 'Node not found.' };`;
+      } else if (frameName) {
+        nodeSelector = `var frames = figma.currentPage.children.filter(function(n) { return n.name.toLowerCase().includes('${frameName.toLowerCase()}'); }); if (frames.length === 0) return { error: 'Frame "${frameName}" not found.' }; var root = frames[0];`;
+      } else {
+        nodeSelector = `var sel = figma.currentPage.selection; if (!sel || sel.length === 0) return { error: 'Select an element or specify a frame name.' }; var root = sel[0];`;
+      }
+
+      const code = `(function() {
+        ${nodeSelector}
+        var BASE = 16;
+        function rem(px) { return parseFloat((px / BASE).toFixed(3)); }
+        function colorHex(c) {
+          var r = Math.round((c.r||0)*255), g = Math.round((c.g||0)*255), b = Math.round((c.b||0)*255);
+          return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + b.toString(16).padStart(2,'0');
+        }
+
+        var textStyles = {};
+        var colors = {};
+        var spacingValues = {};
+        var radiusValues = {};
+
+        function walk(node) {
+          // Colors from fills
+          if (node.fills && node.fills.length > 0) {
+            for (var i = 0; i < node.fills.length; i++) {
+              var f = node.fills[i];
+              if (f.visible === false) continue;
+              if (f.type === 'SOLID' && f.color) {
+                var hex = colorHex(f.color);
+                if (!colors[hex]) colors[hex] = { count: 0, usedBy: [] };
+                colors[hex].count++;
+                if (colors[hex].usedBy.length < 3) colors[hex].usedBy.push(node.name);
+              }
+            }
+          }
+
+          // Colors from strokes
+          if (node.strokes && node.strokes.length > 0) {
+            for (var i = 0; i < node.strokes.length; i++) {
+              var s = node.strokes[i];
+              if (s.visible === false) continue;
+              if (s.type === 'SOLID' && s.color) {
+                var hex = colorHex(s.color);
+                if (!colors[hex]) colors[hex] = { count: 0, usedBy: [] };
+                colors[hex].count++;
+              }
+            }
+          }
+
+          // Typography
+          if (node.type === 'TEXT') {
+            var family = (node.fontName && node.fontName !== figma.mixed) ? node.fontName.family : 'mixed';
+            var style = (node.fontName && node.fontName !== figma.mixed) ? node.fontName.style : '';
+            var size = (node.fontSize && node.fontSize !== figma.mixed) ? node.fontSize : 0;
+            var lh = '';
+            if (node.lineHeight && node.lineHeight !== figma.mixed) {
+              if (node.lineHeight.unit === 'PIXELS') lh = node.lineHeight.value + 'px';
+              else if (node.lineHeight.unit === 'PERCENT') lh = node.lineHeight.value + '%';
+              else lh = 'auto';
+            }
+            var key = family + '/' + style + '/' + size;
+            if (!textStyles[key]) {
+              textStyles[key] = { fontFamily: family, fontStyle: style, fontSize: size, lineHeight: lh, count: 0 };
+            }
+            textStyles[key].count++;
+          }
+
+          // Spacing (gap, padding)
+          if (node.layoutMode && node.layoutMode !== 'NONE') {
+            if (node.itemSpacing) {
+              var g = Math.round(node.itemSpacing);
+              spacingValues[g + 'px'] = (spacingValues[g + 'px'] || 0) + 1;
+            }
+            var sides = [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft];
+            sides.forEach(function(v) {
+              if (v && v > 0) {
+                var k = Math.round(v) + 'px';
+                spacingValues[k] = (spacingValues[k] || 0) + 1;
+              }
+            });
+          }
+
+          // Radius
+          if (node.cornerRadius && node.cornerRadius !== 0 && typeof node.cornerRadius === 'number') {
+            var rk = node.cornerRadius >= 9999 ? 'full' : Math.round(node.cornerRadius) + 'px';
+            radiusValues[rk] = (radiusValues[rk] || 0) + 1;
+          }
+
+          if (node.children) {
+            for (var i = 0; i < node.children.length; i++) walk(node.children[i]);
+          }
+        }
+        walk(root);
+
+        return {
+          name: root.name,
+          textStyles: Object.values(textStyles).sort(function(a,b) { return b.count - a.count; }),
+          colors: Object.keys(colors).map(function(hex) { return { hex: hex, count: colors[hex].count, usedBy: colors[hex].usedBy }; }).sort(function(a,b) { return b.count - a.count; }),
+          spacing: Object.keys(spacingValues).map(function(k) { var px = parseInt(k); return { value: k, rem: rem(px) + 'rem', count: spacingValues[k] }; }).sort(function(a,b) { return parseInt(a.value) - parseInt(b.value); }),
+          radii: Object.keys(radiusValues).map(function(k) { var px = k === 'full' ? 9999 : parseInt(k); return { value: k, rem: k === 'full' ? 'full' : rem(px) + 'rem', count: radiusValues[k] }; }).sort(function(a,b) { return parseInt(a.value) - parseInt(b.value); })
+        };
+      })()`;
+
+      const result = await daemonExec('eval', { code });
+      if (result.error) { spinner.fail(result.error); process.exit(1); }
+
+      spinner.succeed(`Styles extracted from "${result.name}"`);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log('');
+      // Text styles
+      if (result.textStyles.length > 0) {
+        console.log(chalk.cyan.bold(`Typography (${result.textStyles.length} styles)`));
+        for (const t of result.textStyles) {
+          let line = `  ${t.fontFamily} ${t.fontStyle}  ${t.fontSize}px (${(t.fontSize/16).toFixed(3)}rem)`;
+          if (t.lineHeight) line += `  line-height: ${t.lineHeight}`;
+          line += chalk.gray(`  ×${t.count}`);
+          console.log(line);
+        }
+        console.log('');
+      }
+
+      // Colors
+      if (result.colors.length > 0) {
+        console.log(chalk.cyan.bold(`Colors (${result.colors.length} unique)`));
+        for (const c of result.colors) {
+          let line = `  ${c.hex}`;
+          if (c.usedBy.length > 0) line += chalk.gray(`  used by: ${c.usedBy.join(', ')}`);
+          line += chalk.gray(`  ×${c.count}`);
+          console.log(line);
+        }
+        console.log('');
+      }
+
+      // Spacing scale
+      if (result.spacing.length > 0) {
+        console.log(chalk.cyan.bold(`Spacing scale (${result.spacing.length} values)`));
+        for (const s of result.spacing) {
+          console.log(`  ${s.value.padEnd(8)} ${s.rem.padEnd(10)}` + chalk.gray(`×${s.count}`));
+        }
+        console.log('');
+      }
+
+      // Radii
+      if (result.radii.length > 0) {
+        console.log(chalk.cyan.bold(`Border radii (${result.radii.length} values)`));
+        for (const r of result.radii) {
+          console.log(`  ${r.value.padEnd(8)} ${r.rem.padEnd(10)}` + chalk.gray(`×${r.count}`));
+        }
+      }
+    } catch (e) {
+      spinner.fail(`Styles extraction failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
 
 // ============ PROMPT — export to AI tool ============
 

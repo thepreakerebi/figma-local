@@ -31,6 +31,12 @@ Control Figma Desktop with Claude Code. Direct connection — no API key, no MCP
 | "find node named X" | `fig find "X"` |
 | "get specs for this element" | `fig inspect` (selection) |
 | "inspect this button" | Select it in Figma, then `fig inspect` |
+| "inspect from link" | `fig inspect --link "https://..."` |
+| "inspect children too" | `fig inspect --deep` |
+| "generate CSS" | `fig css` (selection) |
+| "generate Tailwind" | `fig css --tailwind` |
+| "measure spacing between" | Select 2 elements, then `fig measure` |
+| "what styles does this frame use" | `fig styles "Frame Name"` |
 
 **Full command reference:** See REFERENCE.md
 

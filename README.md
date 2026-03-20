@@ -147,6 +147,29 @@ fig inspect --json                 # Raw JSON output
 
 Returns dimensions, padding, gap, colors (hex + rgba), typography (font family, size, weight, line-height, letter-spacing), border radius, strokes, shadows, opacity, and variable bindings — all in **px and rem**.
 
+### Generate CSS / Tailwind from design
+
+```bash
+fig css                            # CSS for current selection (rem units)
+fig css --px                       # CSS in px units
+fig css --tailwind                 # Tailwind utility classes
+fig css --link "https://..."       # CSS from a Figma link
+```
+
+### Measure spacing
+
+```bash
+fig measure                        # Select 2 elements in Figma, get the spacing between them
+```
+
+### Extract style guide from a frame
+
+```bash
+fig styles "Login Screen"          # All text styles, colors, spacing values, and radii used
+fig styles --selection             # Styles from current selection
+fig styles --json                  # Raw JSON
+```
+
 ### Design tokens
 
 ```bash
