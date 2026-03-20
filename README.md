@@ -333,15 +333,21 @@ figma-local ships as a Claude Code plugin with 5 skills that teach coding agents
 | **figma-styles** | "style guide", "extract colors/fonts", "spacing scale" |
 | **figma-measure** | "measure spacing", "gap between elements" |
 
-### Install the plugin
+### Install the skills
 
 ```bash
-/plugin install figma-local@claude-plugins-official
+# Clone the repo (skip if you already have it)
+git clone https://github.com/thepreakerebi/figma-cli.git
+
+# Symlink skills into Claude Code's skills directory
+ln -sf "$(pwd)/figma-cli/skills/figma-local" ~/.claude/skills/figma-local
+ln -sf "$(pwd)/figma-cli/skills/figma-inspect" ~/.claude/skills/figma-inspect
+ln -sf "$(pwd)/figma-cli/skills/figma-css" ~/.claude/skills/figma-css
+ln -sf "$(pwd)/figma-cli/skills/figma-styles" ~/.claude/skills/figma-styles
+ln -sf "$(pwd)/figma-cli/skills/figma-measure" ~/.claude/skills/figma-measure
 ```
 
-Or browse in `/plugin > Discover` inside Claude Code.
-
-Once installed, Claude Code automatically knows all `fig` commands and uses them when your tasks involve Figma designs.
+Once installed, Claude Code automatically knows all `fig` commands and uses them when your tasks involve Figma designs. Start a new conversation for skills to take effect.
 
 ---
 
