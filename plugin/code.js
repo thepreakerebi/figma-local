@@ -20,7 +20,7 @@ const MAX_NOTIFY_CHARS = 200;         // Max chars shown in Figma notification
 // ── Rate limiter ───────────────────────────────────────────────
 // Prevents a rogue daemon (or compromised WebSocket) from flooding
 // the plugin with eval calls.
-const RATE_WINDOW_MS = 10_000;
+const RATE_WINDOW_MS = 10000;
 const RATE_MAX       = 30;
 let rateCount        = 0;
 let rateWindowStart  = Date.now();
@@ -156,16 +156,16 @@ figma.ui.onmessage = async (msg) => {
 
   // ── Connection lifecycle (no eval, safe to handle directly) ──
   if (msg.type === 'connected') {
-    figma.notify('✓ FigCli connected', { timeout: 2000 });
+    figma.notify('✓ Figma Local connected', { timeout: 2000 });
     return;
   }
   if (msg.type === 'disconnected') {
-    figma.notify('FigCli disconnected', { timeout: 2000 });
+    figma.notify('Figma Local disconnected', { timeout: 2000 });
     return;
   }
   if (msg.type === 'error') {
     // Sanitise before displaying in Figma UI
-    figma.notify('FigCli: ' + sanitiseNotify(msg.message), { error: true });
+    figma.notify('Figma Local: ' + sanitiseNotify(msg.message), { error: true });
     return;
   }
 };

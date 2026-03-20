@@ -1039,7 +1039,7 @@ program
 
       // Show plugin setup instructions
       console.log(chalk.hex('#FF6B35')('\n  ┌─────────────────────────────────────────────────────┐'));
-      console.log(chalk.hex('#FF6B35')('  │') + chalk.white.bold('  Setup the FigCli plugin                           ') + chalk.hex('#FF6B35')('│'));
+      console.log(chalk.hex('#FF6B35')('  │') + chalk.white.bold('  Setup the Figma Local plugin                      ') + chalk.hex('#FF6B35')('│'));
       console.log(chalk.hex('#FF6B35')('  └─────────────────────────────────────────────────────┘\n'));
 
       console.log(chalk.white.bold('  ONE-TIME SETUP:\n'));
@@ -1049,7 +1049,7 @@ program
       console.log(chalk.cyan('  4. ') + chalk.white('Click ') + chalk.yellow('Open') + chalk.white(' — plugin is now installed!\n'));
 
       console.log(chalk.white.bold('  EACH SESSION:\n'));
-      console.log(chalk.cyan('  → ') + chalk.white('In Figma: ') + chalk.yellow('Plugins → Development → FigCli\n'));
+      console.log(chalk.cyan('  → ') + chalk.white('In Figma: ') + chalk.yellow('Plugins → Development → Figma Local\n'));
 
       console.log(chalk.gray('  💡 Tip: Right-click plugin → "Add to toolbar" for one-click access\n'));
 
@@ -8354,21 +8354,100 @@ blocksCmd
 
 program
   .command('read [frameName]')
-  .description('Extract design info in lean structured format (staged, token-efficient)')
-  .option('--lean', 'Output compact text block instead of raw JSON (default: true)')
-  .option('--json', 'Output raw JSON instead of text block')
-  .option('--tokens', 'Include only used design tokens (skips structure)')
-  .option('--stage <n>', 'Run only stage 1 (metadata), 2 (structure), or 3 (tokens)', null)
+  .description('Read your Figma canvas — list all frames, or dive into one for layout, components, and tokens')
+  .option('--json', 'Output raw JSON instead of formatted text')
+  .option('--tokens', 'Show only the design tokens (colors, spacing, etc.) used in the frame')
+  .option('--selection', 'Read whatever is currently selected in Figma')
+  .option('--link <url>', 'Read a specific node from a Figma selection link (e.g. copied via "Copy link to selection")')
+  .option('--stage <n>', 'Run a specific stage: 1 (list frames), 2 (structure), 3 (tokens)')
+  .addHelpText('after', `
+Examples:
+  fig read                          List all frames on the current page
+  fig read "Login Screen"           Get layout, components, and tokens for the Login Screen frame
+  fig read "Login Screen" --tokens  Show only the design tokens used by Login Screen
+  fig read --selection              Read the node you currently have selected in Figma
+  fig read --link "https://..."     Read a node from a Figma selection link
+  fig read --json                   Output raw JSON (useful for piping to other tools)
+`)
   .action(async (frameName, options) => {
     checkConnection();
-    const spinner = ora('Reading design (stage 1: metadata)...').start();
+    const spinner = ora('Reading design...').start();
 
     try {
+      // --selection: read the currently selected node in Figma
+      if (options.selection) {
+        spinner.text = 'Reading current selection...';
+        const selectionCode = `(function() {
+          const sel = figma.currentPage.selection;
+          if (!sel || sel.length === 0) return { error: 'Nothing selected in Figma. Select a frame or layer first.' };
+          const node = sel[0];
+          function walk(n, depth) {
+            if (depth > 4) return { type: n.type, name: n.name, truncated: true };
+            const obj = { type: n.type, name: n.name };
+            if (n.width) obj.w = Math.round(n.width);
+            if (n.height) obj.h = Math.round(n.height);
+            if (n.type === 'TEXT') obj.text = n.characters.slice(0, 100);
+            if (n.fills && n.fills.length) obj.fills = n.fills.map(f => f.type === 'SOLID' ? { r: Math.round(f.color.r*255), g: Math.round(f.color.g*255), b: Math.round(f.color.b*255) } : { type: f.type });
+            if (n.cornerRadius) obj.radius = n.cornerRadius;
+            if (n.children) obj.children = n.children.slice(0, 20).map(c => walk(c, depth + 1));
+            return obj;
+          }
+          return { selected: sel.length, node: walk(node, 0) };
+        })()`;
+        const result = await daemonExec('eval', { code: selectionCode });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        spinner.succeed(`Reading selection: ${result.node.name}`);
+        console.log(options.json ? JSON.stringify(result, null, 2) : formatSelectionResult(result));
+        return;
+      }
+
+      // --link: parse Figma URL and read a specific node by ID
+      if (options.link) {
+        spinner.text = 'Reading node from link...';
+        // Figma links contain node-id as a query param like ?node-id=123:456 or ?node-id=123-456
+        const url = options.link;
+        const nodeIdMatch = url.match(/node-id=([0-9]+-[0-9]+|[0-9]+:[0-9]+|[0-9]+%3A[0-9]+)/i);
+        if (!nodeIdMatch) {
+          spinner.fail('Could not find a node ID in that link. Copy the link from Figma via right-click → "Copy/Paste as" → "Copy link to selection".');
+          process.exit(1);
+        }
+        // Normalize: Figma URLs use - or %3A, but the API expects :
+        const nodeId = decodeURIComponent(nodeIdMatch[1]).replace('-', ':');
+        const nodeCode = `(function() {
+          const node = figma.getNodeById('${nodeId}');
+          if (!node) return { error: 'Node ${nodeId} not found on the current page.' };
+          function walk(n, depth) {
+            if (depth > 4) return { type: n.type, name: n.name, truncated: true };
+            const obj = { type: n.type, name: n.name };
+            if (n.width) obj.w = Math.round(n.width);
+            if (n.height) obj.h = Math.round(n.height);
+            if (n.type === 'TEXT') obj.text = n.characters.slice(0, 100);
+            if (n.fills && n.fills.length) obj.fills = n.fills.map(f => f.type === 'SOLID' ? { r: Math.round(f.color.r*255), g: Math.round(f.color.g*255), b: Math.round(f.color.b*255) } : { type: f.type });
+            if (n.cornerRadius) obj.radius = n.cornerRadius;
+            if (n.children) obj.children = n.children.slice(0, 20).map(c => walk(c, depth + 1));
+            return obj;
+          }
+          return { nodeId: '${nodeId}', node: walk(node, 0) };
+        })()`;
+        const result = await daemonExec('eval', { code: nodeCode });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        spinner.succeed(`Reading node: ${result.node.name} (${nodeId})`);
+        console.log(options.json ? JSON.stringify(result, null, 2) : formatSelectionResult(result));
+        return;
+      }
+
       // Stage 1: metadata — always run, cheapest call
+      spinner.text = 'Scanning canvas...';
       const metadata = await daemonExec('eval', { code: STAGE1_METADATA });
 
       if (options.stage === '1') {
-        spinner.succeed('Stage 1 complete');
+        spinner.succeed('Canvas scanned');
         console.log(options.json ? JSON.stringify(metadata, null, 2) : formatStage1(metadata));
         return;
       }
@@ -8387,44 +8466,41 @@ program
       } else if (metadata.frames.length === 1) {
         targetFrame = metadata.frames[0];
       } else {
-        spinner.succeed('Stage 1 complete — multiple frames found');
-        console.log('\nAvailable frames (use read <frameName> to focus):');
-        metadata.frames.forEach(f => console.log(`  • ${f.name}  ${f.w}x${f.h}`));
-        console.log('\nOr: read "Frame Name" to extract structure + tokens for a specific frame.');
+        spinner.succeed(`Found ${metadata.frames.length} frames on "${metadata.page}"`);
+        console.log('');
+        metadata.frames.forEach(f => console.log(`  • ${f.name}  ${f.w}x${f.h}  [${f.type}]`));
+        console.log(`\nTo read a specific frame:\n  fig read "${metadata.frames[0].name}"`);
         return;
       }
 
-      // Stage 2: frame structure — only the target frame
-      spinner.text = `Stage 2: reading structure of "${targetFrame.name}"...`;
+      // Stage 2: frame structure
+      spinner.text = `Reading "${targetFrame.name}"...`;
       const frameStructure = await daemonExec('eval', { code: buildFrameStructureCode(targetFrame.id) });
 
       if (options.stage === '2') {
-        spinner.succeed('Stage 2 complete');
+        spinner.succeed('Structure extracted');
         console.log(options.json ? JSON.stringify(frameStructure, null, 2) : JSON.stringify(frameStructure, null, 2));
         return;
       }
 
       if (options.tokens) {
-        // Skip to stage 3 only
-        spinner.text = 'Stage 3: extracting used tokens only...';
+        spinner.text = 'Extracting design tokens...';
         const tokens = await daemonExec('eval', { code: buildUsedTokensCode(targetFrame.id) });
-        spinner.succeed(`Stage 3 complete — ${Object.keys(tokens).length} tokens used in this frame`);
+        spinner.succeed(`${Object.keys(tokens).length} tokens used in "${targetFrame.name}"`);
         console.log(options.json ? JSON.stringify(tokens, null, 2) : formatTokensOnly(tokens));
         return;
       }
 
-      // Stage 3: used tokens — parallel with structure already done
-      spinner.text = 'Stage 3: extracting used tokens...';
+      // Stage 3: used tokens
+      spinner.text = 'Extracting tokens...';
       const tokens = await daemonExec('eval', { code: buildUsedTokensCode(targetFrame.id) });
 
       spinner.succeed(`Read complete — ${targetFrame.name}`);
       console.log('');
 
-      // Format and output
       if (options.json) {
         console.log(JSON.stringify({ metadata, frame: frameStructure, tokens }, null, 2));
       } else {
-        // Default: lean text block
         const ctx = formatLeanContext(metadata, frameStructure, tokens, targetFrame.name);
         console.log(ctx);
       }
@@ -8447,11 +8523,32 @@ function formatTokensOnly(tokens) {
     keys.map(k => `  ${k}: ${tokens[k]}`).join('\n');
 }
 
+function formatSelectionResult(result) {
+  const lines = [];
+  function printNode(node, depth) {
+    if (!node) return;
+    const indent = '  '.repeat(depth);
+    let line = `${indent}[${node.type}] ${node.name}`;
+    if (node.w && node.h) line += `  ${node.w}x${node.h}`;
+    if (node.text) line += `  "${node.text}"`;
+    if (node.radius) line += `  radius=${node.radius}`;
+    if (node.fills && node.fills.length) {
+      const colors = node.fills.map(f => f.r !== undefined ? `rgb(${f.r},${f.g},${f.b})` : f.type).join(', ');
+      line += `  fill=${colors}`;
+    }
+    if (node.truncated) line += '  ...';
+    lines.push(line);
+    if (node.children) node.children.forEach(c => printNode(c, depth + 1));
+  }
+  printNode(result.node, 0);
+  return lines.join('\n');
+}
+
 // ============ PROMPT — export to AI tool ============
 
 program
   .command('prompt [frameName]')
-  .description('Generate a lean, tool-specific AI prompt from a Figma frame')
+  .description('Export a frame as a text prompt for AI tools (Figma Make, Lovable, Pencil, Stitch)')
   .option('-t, --target <tool>', 'Target tool: figma-make | lovable | pencil | paper | stitch', 'figma-make')
   .option('-p, --platform <platform>', 'desktop | mobile | responsive', 'desktop')
   .option('-s, --stack <stack>', 'Tech stack (for Lovable/Pencil)', 'React + shadcn/ui + Tailwind')

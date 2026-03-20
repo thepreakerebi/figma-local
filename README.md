@@ -99,7 +99,7 @@ npm install && npm install -g .
 2. Hamburger menu → **Plugins → Development → Import plugin from manifest...**
 3. Navigate to the `plugin/` folder in this repo (or `$(npm root -g)/figma-local/plugin/`)
 4. Select `manifest.json` → click **Open**
-5. Right-click **FigCli** in the plugin list → **Add to toolbar**
+5. Right-click **Figma Local** in the plugin list → **Add to toolbar**
 
 ### 2. Connect
 
@@ -107,14 +107,14 @@ npm install && npm install -g .
 fig-start --safe
 ```
 
-This starts the daemon, waits for you to click FigCli in Figma, then launches Claude Code.
+This starts the daemon, waits for you to click Figma Local in Figma, then launches Claude Code.
 
 ---
 
 ## Every session after that
 
 ```
-1. Open Figma → click FigCli in the toolbar
+1. Open Figma → click Figma Local in the toolbar
 2. In terminal: fig-start --safe
 ```
 
@@ -127,9 +127,11 @@ Claude Code reads `CLAUDE.md` and knows every command automatically.
 ### Read & understand your canvas
 
 ```bash
-fig read                           # List all frames (fast)
-fig read "Login Screen"            # Layout + components + used tokens only
-fig read "Login Screen" --tokens   # Just the design tokens that frame uses
+fig read                           # List all frames on the current page
+fig read "Login Screen"            # Get the layout tree, components, and design tokens for that frame
+fig read "Login Screen" --tokens   # Show only the design tokens (colors, spacing) that frame uses
+fig read --selection               # Read whatever you have selected right now in Figma
+fig read --link "https://..."      # Read a specific node from a Figma selection link
 fig find "Button"                  # Find nodes by name
 fig node tree                      # Layer hierarchy
 fig canvas info                    # Raw canvas info
@@ -247,7 +249,7 @@ fig fj connect "ID1" "ID2"
 | | Safe Mode | Yolo Mode |
 |-|-----------|-----------|
 | How | Plugin bridge | Direct CDP |
-| Setup per session | Start FigCli plugin | Nothing (after one-time patch) |
+| Setup per session | Start Figma Local plugin | Nothing (after one-time patch) |
 | Speed | Standard | ~10× faster |
 | Extra permissions | None | macOS: Full Disk Access / Windows: Admin |
 | Command | `fig connect --safe` | `fig connect` |
@@ -311,7 +313,7 @@ npm uninstall -g figma-local
 rm -rf ~/.figma-cli ~/.figma-ds-cli
 ```
 
-Remove the plugin in Figma: Plugins → Development → right-click FigCli → Remove.
+Remove the plugin in Figma: Plugins → Development → right-click Figma Local → Remove.
 
 ---
 

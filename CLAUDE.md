@@ -11,6 +11,8 @@ Control Figma Desktop with Claude Code. Direct connection — no API key, no MCP
 | "what's on the canvas" | `fig read` (stage 1 only — fast) |
 | "read this frame" / "analyze Login screen" | `fig read "Login"` |
 | "show design tokens" | `fig read "Frame" --tokens` |
+| "read my selection" | `fig read --selection` |
+| "read this link" | `fig read --link "https://figma.com/..."` |
 | "export prompt for Figma Make" | `fig prompt "Frame" --target figma-make` |
 | "export prompt for Lovable" | `fig prompt "Frame" --target lovable` |
 | "export prompt for Pencil" | `fig prompt "Frame" --target pencil` |
@@ -189,7 +191,7 @@ fig icon add "arrow-right" --size 24 --color "#6366F1"
 ```bash
 # Safe Mode (plugin-based, recommended):
 fig connect --safe
-# → Start FigCli plugin in Figma first (Plugins > Development > FigCli)
+# → Start Figma Local plugin in Figma first (Plugins > Development > Figma Local)
 
 # Yolo Mode (direct patch, no plugin needed):
 fig connect

@@ -1,5 +1,5 @@
 {
-  "name": "FigCli",
+  "name": "Figma Local",
   "id": "figma-cli-bridge",
   "api": "1.0.0",
   "main": "code.js",
