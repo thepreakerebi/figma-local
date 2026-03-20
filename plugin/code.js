@@ -54,8 +54,7 @@ function sanitiseNotify(text) {
 // Show minimal UI (needed for WebSocket connection)
 figma.showUI(__html__, {
   width: 200,
-  height: 92,
-  position: { x: -9999, y: 9999 }
+  height: 92
 });
 
 // Execute code with auto-return and timeout protection
