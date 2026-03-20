@@ -321,6 +321,30 @@ fig-start --safe --here     # launch from your project dir; Claude sees both you
 
 ---
 
+## Claude Code Plugin (Skills)
+
+figma-local ships as a Claude Code plugin with 5 skills that teach coding agents how to use it automatically:
+
+| Skill | Triggers on |
+|-------|------------|
+| **figma-local** | "read the design", "what's on the canvas", "Figma to code" |
+| **figma-inspect** | "get specs", "what font/color/spacing", "design specs" |
+| **figma-css** | "generate CSS", "Tailwind classes", "convert to CSS" |
+| **figma-styles** | "style guide", "extract colors/fonts", "spacing scale" |
+| **figma-measure** | "measure spacing", "gap between elements" |
+
+### Install the plugin
+
+```bash
+/plugin install figma-local@claude-plugins-official
+```
+
+Or browse in `/plugin > Discover` inside Claude Code.
+
+Once installed, Claude Code automatically knows all `fig` commands and uses them when your tasks involve Figma designs.
+
+---
+
 ## For teams
 
 ```bash

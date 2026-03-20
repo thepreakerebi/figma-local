@@ -1,0 +1,8 @@
+{
+  "name": "figma-local",
+  "description": "Control Figma Desktop from Claude Code — read designs, inspect specs, generate CSS, extract styles. No API key required.",
+  "author": {
+    "name": "thepreakerebi",
+    "email": "thepreakerebi@gmail.com"
+  }
+}
