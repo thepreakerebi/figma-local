@@ -13,7 +13,8 @@
   "files": [
     "src",
     "bin",
-    "plugin"
+    "plugin",
+    "skills"
   ],
   "keywords": [
     "figma",

@@ -53,6 +53,20 @@ fi
 
 echo ""
 echo -e "  ${GREEN}✓ figma-cli installed!${NC}"
+
+# ── Install Claude Code skills (if ~/.claude exists) ──────────
+SKILLS_SRC="$(npm root -g)/figma-local/skills"
+SKILLS_DIR="$HOME/.claude/skills"
+if [ -d "$HOME/.claude" ] && [ -d "$SKILLS_SRC" ]; then
+  echo ""
+  echo -e "  Installing Claude Code skills..."
+  mkdir -p "$SKILLS_DIR"
+  for skill in figma-local figma-inspect figma-css figma-styles figma-measure; do
+    ln -sf "$SKILLS_SRC/$skill" "$SKILLS_DIR/$skill" 2>/dev/null || true
+  done
+  echo -e "  ${GREEN}✓${NC} Claude Code skills installed"
+fi
+
 echo ""
 echo -e "  ${BOLD}Commands available:${NC}"
 echo -e "    ${BOLD}fig${NC}           — run any figma-cli command"
@@ -62,7 +76,7 @@ echo -e "  ${BOLD}Quick start:${NC}"
 echo -e "    1. Open Figma Desktop"
 echo -e "    2. Import plugin: Plugins → Development → Import plugin from manifest"
 echo -e "       Path: $(npm root -g)/figma-local/plugin/manifest.json"
-echo -e "    3. Run: ${BOLD}fig-start --safe${NC}"
+echo -e "    3. Run: ${BOLD}fig connect --safe${NC}"
 echo ""
 echo -e "  Docs: https://github.com/${REPO}"
 echo ""
