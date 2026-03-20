@@ -1,4 +1,4 @@
-# figma-cli
+# figma-local
 
 > Control Figma Desktop with Claude Code. Design tokens, shadcn/ui components, AI prompt export, lint, and more — no API key required.
 
@@ -12,7 +12,7 @@
 
 ## What is this?
 
-**figma-cli** connects directly to Figma Desktop and lets you — or Claude Code — control it with natural language and `fig` commands.
+**figma-local** connects directly to Figma Desktop and lets you — or Claude Code — control it with natural language and `fig` commands.
 
 - **Write** — Create frames, components, design tokens, icons, and full UI kits
 - **Read** — Extract design context in a lean staged format (91–97% fewer tokens than raw data dumps)
@@ -299,7 +299,7 @@ npm install -g figma-local
 Pin a version for consistency:
 
 ```bash
-npm install -g @jetro/figma-local@1.0.0
+npm install -g figma-local@1.0.0
 ```
 
 ---
