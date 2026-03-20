@@ -1,5 +1,5 @@
 {
-  "name": "@jetro/figcli",
+  "name": "figma-local",
   "version": "1.0.0",
   "description": "Figma CLI — control Figma Desktop with Claude Code. Smart read, write, and AI-prompt export. No API key required.",
   "author": "elvke",

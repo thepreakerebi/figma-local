@@ -43,11 +43,11 @@ echo -e "  ${GREEN}✓${NC} npm $(npm -v)"
 # ── Install via npm global ─────────────────────────────────────
 echo ""
 echo -e "  Installing figma-cli via npm..."
-npm install -g @jetro/figcli 2>&1 | tail -3
+npm install -g figma-local 2>&1 | tail -3
 
 if ! command -v fig &>/dev/null; then
   echo -e "${RED}✗ Installation failed — 'fig' not found on PATH.${NC}"
-  echo "  Try manually: npm install -g @jetro/figcli"
+  echo "  Try manually: npm install -g figma-local"
   exit 1
 fi
 
@@ -61,7 +61,7 @@ echo ""
 echo -e "  ${BOLD}Quick start:${NC}"
 echo -e "    1. Open Figma Desktop"
 echo -e "    2. Import plugin: Plugins → Development → Import plugin from manifest"
-echo -e "       Path: $(npm root -g)/figcli/plugin/manifest.json"
+echo -e "       Path: $(npm root -g)/figma-local/plugin/manifest.json"
 echo -e "    3. Run: ${BOLD}fig-start --safe${NC}"
 echo ""
 echo -e "  Docs: https://github.com/${REPO}"
