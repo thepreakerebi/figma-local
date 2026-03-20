@@ -8544,6 +8544,447 @@ function formatSelectionResult(result) {
   return lines.join('\n');
 }
 
+// ============ INSPECT — detailed design specs ============
+
+const INSPECT_CODE = `(function() {
+  var sel = figma.currentPage.selection;
+  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select a frame, component, or layer in Figma first.' };
+
+  var BASE = 16; // 1rem = 16px
+
+  function toRem(px) {
+    return parseFloat((px / BASE).toFixed(3));
+  }
+
+  function colorToHex(c) {
+    var r = Math.round((c.r || 0) * 255);
+    var g = Math.round((c.g || 0) * 255);
+    var b = Math.round((c.b || 0) * 255);
+    return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
+  }
+
+  function colorToRgba(c, opacity) {
+    var r = Math.round((c.r || 0) * 255);
+    var g = Math.round((c.g || 0) * 255);
+    var b = Math.round((c.b || 0) * 255);
+    if (opacity !== undefined && opacity < 1) {
+      return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + parseFloat(opacity.toFixed(2)) + ')';
+    }
+    return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+  }
+
+  function inspectNode(node) {
+    var spec = {
+      name: node.name,
+      type: node.type,
+    };
+
+    // Dimensions
+    if (node.width !== undefined) {
+      spec.dimensions = {
+        width: { px: Math.round(node.width), rem: toRem(node.width) },
+        height: { px: Math.round(node.height), rem: toRem(node.height) }
+      };
+    }
+
+    // Position
+    if (node.x !== undefined) {
+      spec.position = {
+        x: { px: Math.round(node.x), rem: toRem(node.x) },
+        y: { px: Math.round(node.y), rem: toRem(node.y) }
+      };
+    }
+
+    // Auto layout / Flexbox
+    if (node.layoutMode && node.layoutMode !== 'NONE') {
+      spec.layout = {
+        mode: node.layoutMode === 'HORIZONTAL' ? 'row' : 'column',
+        gap: { px: node.itemSpacing || 0, rem: toRem(node.itemSpacing || 0) },
+        padding: {
+          top: { px: node.paddingTop || 0, rem: toRem(node.paddingTop || 0) },
+          right: { px: node.paddingRight || 0, rem: toRem(node.paddingRight || 0) },
+          bottom: { px: node.paddingBottom || 0, rem: toRem(node.paddingBottom || 0) },
+          left: { px: node.paddingLeft || 0, rem: toRem(node.paddingLeft || 0) }
+        },
+        mainAxisAlign: node.primaryAxisAlignItems || 'MIN',
+        crossAxisAlign: node.counterAxisAlignItems || 'MIN',
+        wrap: node.layoutWrap === 'WRAP' ? true : false
+      };
+      if (node.primaryAxisSizingMode) spec.layout.mainAxisSizing = node.primaryAxisSizingMode;
+      if (node.counterAxisSizingMode) spec.layout.crossAxisSizing = node.counterAxisSizingMode;
+    }
+
+    // Corner radius
+    if (node.cornerRadius !== undefined && node.cornerRadius !== 0) {
+      if (typeof node.cornerRadius === 'number') {
+        spec.borderRadius = { px: node.cornerRadius, rem: toRem(node.cornerRadius) };
+      }
+    }
+    // Per-corner radius
+    if (node.topLeftRadius || node.topRightRadius || node.bottomRightRadius || node.bottomLeftRadius) {
+      spec.borderRadiusPerCorner = {
+        topLeft: { px: node.topLeftRadius || 0, rem: toRem(node.topLeftRadius || 0) },
+        topRight: { px: node.topRightRadius || 0, rem: toRem(node.topRightRadius || 0) },
+        bottomRight: { px: node.bottomRightRadius || 0, rem: toRem(node.bottomRightRadius || 0) },
+        bottomLeft: { px: node.bottomLeftRadius || 0, rem: toRem(node.bottomLeftRadius || 0) }
+      };
+    }
+
+    // Fills
+    if (node.fills && node.fills.length > 0) {
+      spec.fills = [];
+      for (var i = 0; i < node.fills.length; i++) {
+        var f = node.fills[i];
+        if (f.visible === false) continue;
+        var fillSpec = { type: f.type };
+        if (f.type === 'SOLID' && f.color) {
+          fillSpec.hex = colorToHex(f.color);
+          fillSpec.rgba = colorToRgba(f.color, f.opacity);
+          fillSpec.opacity = f.opacity !== undefined ? f.opacity : 1;
+        }
+        if (f.type === 'GRADIENT_LINEAR' || f.type === 'GRADIENT_RADIAL') {
+          fillSpec.stops = f.gradientStops ? f.gradientStops.map(function(s) {
+            return { color: colorToHex(s.color), position: parseFloat(s.position.toFixed(2)) };
+          }) : [];
+        }
+        spec.fills.push(fillSpec);
+      }
+    }
+
+    // Strokes
+    if (node.strokes && node.strokes.length > 0) {
+      spec.strokes = [];
+      for (var i = 0; i < node.strokes.length; i++) {
+        var s = node.strokes[i];
+        if (s.visible === false) continue;
+        var strokeSpec = { type: s.type };
+        if (s.type === 'SOLID' && s.color) {
+          strokeSpec.hex = colorToHex(s.color);
+          strokeSpec.rgba = colorToRgba(s.color, s.opacity);
+        }
+        spec.strokes.push(strokeSpec);
+      }
+      if (node.strokeWeight) spec.strokeWeight = { px: node.strokeWeight, rem: toRem(node.strokeWeight) };
+      if (node.strokeAlign) spec.strokeAlign = node.strokeAlign;
+    }
+
+    // Typography
+    if (node.type === 'TEXT') {
+      spec.typography = {};
+      spec.typography.content = node.characters;
+      if (node.fontName && node.fontName !== figma.mixed) {
+        spec.typography.fontFamily = node.fontName.family;
+        spec.typography.fontStyle = node.fontName.style;
+      }
+      if (node.fontSize && node.fontSize !== figma.mixed) {
+        spec.typography.fontSize = { px: node.fontSize, rem: toRem(node.fontSize) };
+      }
+      if (node.fontWeight && node.fontWeight !== figma.mixed) {
+        spec.typography.fontWeight = node.fontWeight;
+      }
+      if (node.lineHeight && node.lineHeight !== figma.mixed) {
+        if (node.lineHeight.unit === 'PIXELS') {
+          spec.typography.lineHeight = { px: node.lineHeight.value, rem: toRem(node.lineHeight.value) };
+        } else if (node.lineHeight.unit === 'PERCENT') {
+          spec.typography.lineHeight = { percent: node.lineHeight.value + '%' };
+        } else {
+          spec.typography.lineHeight = 'auto';
+        }
+      }
+      if (node.letterSpacing && node.letterSpacing !== figma.mixed) {
+        if (node.letterSpacing.unit === 'PIXELS') {
+          spec.typography.letterSpacing = { px: node.letterSpacing.value, rem: toRem(node.letterSpacing.value) };
+        } else if (node.letterSpacing.unit === 'PERCENT') {
+          spec.typography.letterSpacing = { percent: node.letterSpacing.value + '%' };
+        }
+      }
+      if (node.textAlignHorizontal) spec.typography.textAlign = node.textAlignHorizontal.toLowerCase();
+      if (node.textDecoration && node.textDecoration !== 'NONE' && node.textDecoration !== figma.mixed) {
+        spec.typography.textDecoration = node.textDecoration.toLowerCase();
+      }
+      if (node.textCase && node.textCase !== 'ORIGINAL' && node.textCase !== figma.mixed) {
+        spec.typography.textTransform = node.textCase.toLowerCase();
+      }
+    }
+
+    // Effects (shadows, blur)
+    if (node.effects && node.effects.length > 0) {
+      spec.effects = [];
+      for (var i = 0; i < node.effects.length; i++) {
+        var e = node.effects[i];
+        if (e.visible === false) continue;
+        var effectSpec = { type: e.type };
+        if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
+          effectSpec.offset = {
+            x: { px: e.offset.x, rem: toRem(e.offset.x) },
+            y: { px: e.offset.y, rem: toRem(e.offset.y) }
+          };
+          effectSpec.blur = { px: e.radius, rem: toRem(e.radius) };
+          effectSpec.spread = { px: e.spread || 0, rem: toRem(e.spread || 0) };
+          if (e.color) effectSpec.color = colorToRgba(e.color, e.color.a);
+        }
+        if (e.type === 'LAYER_BLUR' || e.type === 'BACKGROUND_BLUR') {
+          effectSpec.blur = { px: e.radius, rem: toRem(e.radius) };
+        }
+        spec.effects.push(effectSpec);
+      }
+    }
+
+    // Opacity
+    if (node.opacity !== undefined && node.opacity < 1) {
+      spec.opacity = parseFloat(node.opacity.toFixed(2));
+    }
+
+    // Constraints
+    if (node.constraints) {
+      spec.constraints = {
+        horizontal: node.constraints.horizontal,
+        vertical: node.constraints.vertical
+      };
+    }
+
+    // Component info
+    if (node.type === 'INSTANCE' && node.mainComponent) {
+      spec.component = {
+        name: node.mainComponent.name,
+        id: node.mainComponent.id
+      };
+      if (node.mainComponent.parent && node.mainComponent.parent.type === 'COMPONENT_SET') {
+        spec.component.set = node.mainComponent.parent.name;
+      }
+    }
+    if (node.type === 'COMPONENT') {
+      spec.component = { name: node.name, id: node.id, isMainComponent: true };
+    }
+
+    // Variable bindings
+    if (node.boundVariables) {
+      var vars = {};
+      var bindings = node.boundVariables;
+      Object.keys(bindings).forEach(function(prop) {
+        var binding = bindings[prop];
+        if (!binding) return;
+        var entries = Array.isArray(binding) ? binding : [binding];
+        entries.forEach(function(b) {
+          if (!b || !b.id) return;
+          try {
+            var v = figma.variables.getVariableById(b.id);
+            if (v) vars[prop] = v.name;
+          } catch(e) {}
+        });
+      });
+      if (Object.keys(vars).length > 0) spec.variableBindings = vars;
+    }
+
+    // Children summary
+    if (node.children && node.children.length > 0) {
+      spec.childCount = node.children.length;
+      spec.children = node.children.slice(0, 30).map(function(c) {
+        return { name: c.name, type: c.type, w: c.width ? Math.round(c.width) : undefined, h: c.height ? Math.round(c.height) : undefined };
+      });
+    }
+
+    return spec;
+  }
+
+  // Inspect all selected nodes (up to 10)
+  var results = [];
+  var count = Math.min(sel.length, 10);
+  for (var i = 0; i < count; i++) {
+    results.push(inspectNode(sel[i]));
+  }
+  return { count: sel.length, specs: results };
+})()`;
+
+program
+  .command('inspect')
+  .description('Get detailed design specs for the selected element — spacing, colors, typography, effects (all in px and rem)')
+  .option('--json', 'Output raw JSON')
+  .option('--node <id>', 'Inspect a specific node by ID instead of selection')
+  .addHelpText('after', `
+Examples:
+  fig inspect                  Inspect what you have selected in Figma
+  fig inspect --node "123:456" Inspect a specific node by ID
+  fig inspect --json           Output raw JSON for programmatic use
+
+Returns dimensions, spacing (padding/gap), colors (hex + rgba), typography
+(font, size, weight, line-height, letter-spacing), border radius, strokes,
+shadows, opacity, variable bindings — all in px and rem.
+`)
+  .action(async (options) => {
+    checkConnection();
+    const spinner = ora('Inspecting selection...').start();
+
+    try {
+      let code = INSPECT_CODE;
+      if (options.node) {
+        // Replace selection logic with getNodeById
+        code = INSPECT_CODE.replace(
+          "var sel = figma.currentPage.selection;\n  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select a frame, component, or layer in Figma first.' };",
+          `var targetNode = figma.getNodeById('${options.node}');\n  if (!targetNode) return { error: 'Node ${options.node} not found.' };\n  var sel = [targetNode];`
+        );
+      }
+
+      const result = await daemonExec('eval', { code });
+
+      if (result.error) {
+        spinner.fail(result.error);
+        process.exit(1);
+      }
+
+      spinner.succeed(`Inspected ${result.count} element${result.count > 1 ? 's' : ''}`);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log('');
+        for (const spec of result.specs) {
+          console.log(formatInspectSpec(spec));
+          console.log('');
+        }
+      }
+    } catch (e) {
+      spinner.fail(`Inspect failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
+function formatInspectSpec(spec) {
+  const lines = [];
+  const px = (v) => typeof v === 'object' && v.px !== undefined ? v.px : v;
+  const rem = (v) => typeof v === 'object' && v.rem !== undefined ? v.rem : null;
+  const dual = (v) => {
+    if (!v || typeof v !== 'object') return String(v);
+    if (v.px !== undefined && v.rem !== undefined) return `${v.px}px (${v.rem}rem)`;
+    if (v.percent) return v.percent;
+    return String(v);
+  };
+
+  // Header
+  lines.push(chalk.bold(`${spec.name}`) + chalk.gray(` [${spec.type}]`));
+  lines.push(chalk.gray('─'.repeat(50)));
+
+  // Dimensions
+  if (spec.dimensions) {
+    lines.push(chalk.cyan('Dimensions'));
+    lines.push(`  Width:  ${dual(spec.dimensions.width)}`);
+    lines.push(`  Height: ${dual(spec.dimensions.height)}`);
+  }
+
+  // Position
+  if (spec.position) {
+    lines.push(chalk.cyan('Position'));
+    lines.push(`  X: ${dual(spec.position.x)}   Y: ${dual(spec.position.y)}`);
+  }
+
+  // Layout
+  if (spec.layout) {
+    lines.push(chalk.cyan('Layout (Auto Layout)'));
+    lines.push(`  Direction: ${spec.layout.mode}`);
+    lines.push(`  Gap:       ${dual(spec.layout.gap)}`);
+    const p = spec.layout.padding;
+    lines.push(`  Padding:   ${px(p.top)}px ${px(p.right)}px ${px(p.bottom)}px ${px(p.left)}px  (${rem(p.top)}rem ${rem(p.right)}rem ${rem(p.bottom)}rem ${rem(p.left)}rem)`);
+    lines.push(`  Align:     main=${spec.layout.mainAxisAlign}  cross=${spec.layout.crossAxisAlign}`);
+    if (spec.layout.wrap) lines.push(`  Wrap:      yes`);
+  }
+
+  // Border radius
+  if (spec.borderRadius) {
+    lines.push(chalk.cyan('Border Radius'));
+    lines.push(`  ${dual(spec.borderRadius)}`);
+  }
+  if (spec.borderRadiusPerCorner) {
+    lines.push(chalk.cyan('Border Radius (per corner)'));
+    const c = spec.borderRadiusPerCorner;
+    lines.push(`  TL: ${dual(c.topLeft)}  TR: ${dual(c.topRight)}  BR: ${dual(c.bottomRight)}  BL: ${dual(c.bottomLeft)}`);
+  }
+
+  // Fills
+  if (spec.fills && spec.fills.length > 0) {
+    lines.push(chalk.cyan('Fills'));
+    for (const f of spec.fills) {
+      if (f.type === 'SOLID') {
+        lines.push(`  ${f.hex}  ${f.rgba}${f.opacity < 1 ? `  opacity=${f.opacity}` : ''}`);
+      } else if (f.stops) {
+        lines.push(`  ${f.type}: ${f.stops.map(s => `${s.color} @${s.position}`).join(' → ')}`);
+      } else {
+        lines.push(`  ${f.type}`);
+      }
+    }
+  }
+
+  // Strokes
+  if (spec.strokes && spec.strokes.length > 0) {
+    lines.push(chalk.cyan('Strokes'));
+    for (const s of spec.strokes) {
+      let line = `  ${s.type === 'SOLID' ? s.hex : s.type}`;
+      lines.push(line);
+    }
+    if (spec.strokeWeight) lines.push(`  Weight: ${dual(spec.strokeWeight)}  Align: ${spec.strokeAlign || 'inside'}`);
+  }
+
+  // Typography
+  if (spec.typography) {
+    const t = spec.typography;
+    lines.push(chalk.cyan('Typography'));
+    if (t.fontFamily) lines.push(`  Font:           ${t.fontFamily} ${t.fontStyle || ''}`);
+    if (t.fontSize) lines.push(`  Size:           ${dual(t.fontSize)}`);
+    if (t.fontWeight) lines.push(`  Weight:         ${t.fontWeight}`);
+    if (t.lineHeight) lines.push(`  Line height:    ${typeof t.lineHeight === 'string' ? t.lineHeight : dual(t.lineHeight)}`);
+    if (t.letterSpacing) lines.push(`  Letter spacing: ${dual(t.letterSpacing)}`);
+    if (t.textAlign) lines.push(`  Text align:     ${t.textAlign}`);
+    if (t.textDecoration) lines.push(`  Decoration:     ${t.textDecoration}`);
+    if (t.textTransform) lines.push(`  Transform:      ${t.textTransform}`);
+    if (t.content) lines.push(`  Content:        "${t.content.slice(0, 80)}${t.content.length > 80 ? '...' : ''}"`);
+  }
+
+  // Effects
+  if (spec.effects && spec.effects.length > 0) {
+    lines.push(chalk.cyan('Effects'));
+    for (const e of spec.effects) {
+      if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
+        lines.push(`  ${e.type === 'DROP_SHADOW' ? 'Drop shadow' : 'Inner shadow'}: ${px(e.offset.x)}px ${px(e.offset.y)}px ${px(e.blur)}px ${px(e.spread)}px  ${e.color || ''}`);
+        lines.push(`    → ${rem(e.offset.x)}rem ${rem(e.offset.y)}rem ${rem(e.blur)}rem ${rem(e.spread)}rem`);
+      } else {
+        lines.push(`  ${e.type}: blur ${dual(e.blur)}`);
+      }
+    }
+  }
+
+  // Opacity
+  if (spec.opacity !== undefined) {
+    lines.push(chalk.cyan('Opacity') + `  ${spec.opacity}`);
+  }
+
+  // Variable bindings
+  if (spec.variableBindings) {
+    lines.push(chalk.cyan('Variable Bindings'));
+    for (const [prop, name] of Object.entries(spec.variableBindings)) {
+      lines.push(`  ${prop}: ${name}`);
+    }
+  }
+
+  // Component
+  if (spec.component) {
+    lines.push(chalk.cyan('Component'));
+    lines.push(`  Name: ${spec.component.name}`);
+    if (spec.component.set) lines.push(`  Set:  ${spec.component.set}`);
+    if (spec.component.isMainComponent) lines.push(`  (Main component definition)`);
+  }
+
+  // Children
+  if (spec.childCount) {
+    lines.push(chalk.cyan(`Children (${spec.childCount})`));
+    for (const c of spec.children) {
+      let line = `  [${c.type}] ${c.name}`;
+      if (c.w && c.h) line += `  ${c.w}x${c.h}`;
+      lines.push(line);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 // ============ PROMPT — export to AI tool ============
 
 program

@@ -29,6 +29,8 @@ Control Figma Desktop with Claude Code. Direct connection — no API key, no MCP
 | "list variables" | `fig var list` |
 | "export as CSS / Tailwind" | `fig var export css` |
 | "find node named X" | `fig find "X"` |
+| "get specs for this element" | `fig inspect` (selection) |
+| "inspect this button" | Select it in Figma, then `fig inspect` |
 
 **Full command reference:** See REFERENCE.md
 

@@ -137,6 +137,16 @@ fig node tree                      # Layer hierarchy
 fig canvas info                    # Raw canvas info
 ```
 
+### Inspect design specs
+
+```bash
+fig inspect                        # Full specs for the selected element (spacing, colors, fonts, effects)
+fig inspect --node "123:456"       # Inspect a specific node by ID
+fig inspect --json                 # Raw JSON output
+```
+
+Returns dimensions, padding, gap, colors (hex + rgba), typography (font family, size, weight, line-height, letter-spacing), border radius, strokes, shadows, opacity, and variable bindings — all in **px and rem**.
+
 ### Design tokens
 
 ```bash
