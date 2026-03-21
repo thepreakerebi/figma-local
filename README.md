@@ -51,6 +51,12 @@ npm install -g figma-local
 
 Gives you `fig` and `fig-start` globally on your PATH.
 
+**Update to latest:**
+
+```bash
+npm update -g figma-local
+```
+
 ### curl (one-line)
 
 ```bash
