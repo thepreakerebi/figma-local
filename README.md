@@ -145,7 +145,7 @@ fig inspect --node "123:456"       # Inspect a specific node by ID
 fig inspect --json                 # Raw JSON output
 ```
 
-Returns dimensions, padding, gap, colors (hex + rgba), typography (font family, size, weight, line-height, letter-spacing), border radius, strokes, shadows, opacity, and variable bindings — all in **px and rem**.
+Returns dimensions, padding, gap, colors (hex + rgba), typography (font family, size, weight, line-height, letter-spacing), border radius, strokes, shadows, opacity, and variable bindings (name + resolved value + per-mode values for Light/Dark) — all in **px and rem**.
 
 ### Generate CSS / Tailwind from design
 
@@ -169,6 +169,17 @@ fig styles "Login Screen"          # All text styles, colors, spacing values, an
 fig styles --selection             # Styles from current selection
 fig styles --json                  # Raw JSON
 ```
+
+### Document a component (full recursive spec)
+
+```bash
+fig document                       # Document selected component — all children, all specs
+fig document --json                # Structured JSON for coding agents
+fig document --link "https://..."  # Document from a Figma link
+fig document --tokens-only         # Just the design tokens used
+```
+
+Returns a complete breakdown: summary, all unique design tokens (colors, typography, spacing, radii, shadows), and a recursive tree of every element with full specs. One command gives a coding agent everything it needs to replicate the component.
 
 ### Design tokens
 
@@ -323,7 +334,7 @@ fig-start --safe --here     # launch from your project dir; Claude sees both you
 
 ## Claude Code Plugin (Skills)
 
-figma-local ships as a Claude Code plugin with 5 skills that teach coding agents how to use it automatically:
+figma-local ships as a Claude Code plugin with 6 skills that teach coding agents how to use it automatically:
 
 | Skill | Triggers on |
 |-------|------------|
@@ -332,6 +343,7 @@ figma-local ships as a Claude Code plugin with 5 skills that teach coding agents
 | **figma-css** | "generate CSS", "Tailwind classes", "convert to CSS" |
 | **figma-styles** | "style guide", "extract colors/fonts", "spacing scale" |
 | **figma-measure** | "measure spacing", "gap between elements" |
+| **figma-document** | "document this component", "full spec sheet", "deep breakdown" |
 
 ### Install the skills
 

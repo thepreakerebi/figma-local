@@ -6764,7 +6764,31 @@ node
               const b = Array.isArray(binding) ? binding[0] : binding;
               if (b && b.id) {
                 const variable = figma.variables.getVariableById(b.id);
-                bindings[prop] = variable ? variable.name : b.id;
+                if (variable) {
+                  const info = { name: variable.name };
+                  try {
+                    const modeIds = Object.keys(variable.valuesByMode);
+                    if (modeIds.length > 0) {
+                      const val = variable.valuesByMode[modeIds[0]];
+                      if (val !== undefined) {
+                        if (typeof val === 'object' && val.r !== undefined) {
+                          const r = Math.round((val.r||0)*255), g = Math.round((val.g||0)*255), bl = Math.round((val.b||0)*255);
+                          info.value = '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + bl.toString(16).padStart(2,'0');
+                        } else if (typeof val === 'object' && val.id) {
+                          try {
+                            const alias = figma.variables.getVariableById(val.id);
+                            info.value = alias ? alias.name + ' (alias)' : 'alias';
+                          } catch(e) { info.value = 'alias'; }
+                        } else {
+                          info.value = val;
+                        }
+                      }
+                    }
+                  } catch(e) {}
+                  bindings[prop] = info;
+                } else {
+                  bindings[prop] = { name: b.id };
+                }
               }
             }
           }
@@ -8769,7 +8793,49 @@ const INSPECT_CODE = `(function() {
           if (!b || !b.id) return;
           try {
             var v = figma.variables.getVariableById(b.id);
-            if (v) vars[prop] = v.name;
+            if (v) {
+              var info = { name: v.name };
+              try {
+                var modeIds = Object.keys(v.valuesByMode);
+                if (modeIds.length > 0) {
+                  var val = v.valuesByMode[modeIds[0]];
+                  if (val !== undefined) {
+                    if (typeof val === 'object' && val.r !== undefined) {
+                      info.value = colorToHex(val);
+                    } else if (typeof val === 'object' && val.id) {
+                      try {
+                        var alias = figma.variables.getVariableById(val.id);
+                        if (alias) info.value = alias.name + ' (alias)';
+                      } catch(e2) { info.value = 'alias'; }
+                    } else {
+                      info.value = val;
+                    }
+                  }
+                }
+                if (modeIds.length > 1) {
+                  info.modes = {};
+                  for (var mi = 0; mi < modeIds.length; mi++) {
+                    var mVal = v.valuesByMode[modeIds[mi]];
+                    try {
+                      var collection = figma.variables.getVariableCollectionById(v.variableCollectionId);
+                      var modeName = collection ? collection.modes.find(function(m) { return m.modeId === modeIds[mi]; }) : null;
+                      var mKey = modeName ? modeName.name : modeIds[mi];
+                      if (typeof mVal === 'object' && mVal.r !== undefined) {
+                        info.modes[mKey] = colorToHex(mVal);
+                      } else if (typeof mVal === 'object' && mVal.id) {
+                        try {
+                          var aliasM = figma.variables.getVariableById(mVal.id);
+                          info.modes[mKey] = aliasM ? aliasM.name : 'alias';
+                        } catch(e3) { info.modes[mKey] = 'alias'; }
+                      } else {
+                        info.modes[mKey] = mVal;
+                      }
+                    } catch(e4) {}
+                  }
+                }
+              } catch(e5) {}
+              vars[prop] = info;
+            }
           } catch(e) {}
         });
       });
@@ -9003,8 +9069,18 @@ function formatInspectSpec(spec) {
   // Variable bindings
   if (spec.variableBindings) {
     lines.push(chalk.cyan('Variable Bindings'));
-    for (const [prop, name] of Object.entries(spec.variableBindings)) {
-      lines.push(`  ${prop}: ${name}`);
+    for (const [prop, binding] of Object.entries(spec.variableBindings)) {
+      if (typeof binding === 'object' && binding.name) {
+        let line = `  ${prop}: ${binding.name}`;
+        if (binding.value !== undefined) line += ` = ${binding.value}`;
+        if (binding.modes) {
+          const modeStr = Object.entries(binding.modes).map(([m, v]) => `${m}: ${v}`).join(', ');
+          line += `  [${modeStr}]`;
+        }
+        lines.push(line);
+      } else {
+        lines.push(`  ${prop}: ${binding}`);
+      }
     }
   }
 
@@ -9638,6 +9714,482 @@ Examples:
       }
     } catch (e) {
       spinner.fail(`Styles extraction failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============ DOCUMENT — deep component documentation ============
+
+const DOCUMENT_CODE = `(function() {
+  var BASE = 16;
+  function toRem(px) { return parseFloat((px / BASE).toFixed(3)); }
+  function dual(px) { return { px: Math.round(px), rem: toRem(px) }; }
+  function colorToHex(c) {
+    var r = Math.round((c.r||0)*255), g = Math.round((c.g||0)*255), b = Math.round((c.b||0)*255);
+    return '#' + r.toString(16).padStart(2,'0') + g.toString(16).padStart(2,'0') + b.toString(16).padStart(2,'0');
+  }
+  function colorToRgba(c, opacity) {
+    var r = Math.round((c.r||0)*255), g = Math.round((c.g||0)*255), b = Math.round((c.b||0)*255);
+    if (opacity !== undefined && opacity < 1) return 'rgba(' + r + ',' + g + ',' + b + ',' + parseFloat(opacity.toFixed(2)) + ')';
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function extractNode(node, depth) {
+    if (depth > 15) return null;
+    var n = { name: node.name, type: node.type };
+
+    // Dimensions
+    if (node.width !== undefined) {
+      n.width = dual(node.width);
+      n.height = dual(node.height);
+    }
+
+    // Visibility & opacity
+    if (node.visible === false) n.visible = false;
+    if (node.opacity !== undefined && node.opacity < 1) n.opacity = parseFloat(node.opacity.toFixed(2));
+
+    // Auto layout
+    if (node.layoutMode && node.layoutMode !== 'NONE') {
+      n.layout = {
+        direction: node.layoutMode === 'HORIZONTAL' ? 'row' : 'column',
+        gap: dual(node.itemSpacing || 0),
+        padding: {
+          top: dual(node.paddingTop || 0),
+          right: dual(node.paddingRight || 0),
+          bottom: dual(node.paddingBottom || 0),
+          left: dual(node.paddingLeft || 0)
+        },
+        mainAxisAlign: node.primaryAxisAlignItems || 'MIN',
+        crossAxisAlign: node.counterAxisAlignItems || 'MIN'
+      };
+      if (node.layoutWrap === 'WRAP') n.layout.wrap = true;
+      if (node.primaryAxisSizingMode) n.layout.mainAxisSizing = node.primaryAxisSizingMode;
+      if (node.counterAxisSizingMode) n.layout.crossAxisSizing = node.counterAxisSizingMode;
+    }
+
+    // Sizing behavior
+    if (node.layoutSizingHorizontal) n.horizontalSizing = node.layoutSizingHorizontal;
+    if (node.layoutSizingVertical) n.verticalSizing = node.layoutSizingVertical;
+
+    // Corner radius
+    if (node.cornerRadius !== undefined && node.cornerRadius !== 0 && typeof node.cornerRadius === 'number') {
+      n.borderRadius = dual(node.cornerRadius);
+    } else if (node.topLeftRadius || node.topRightRadius || node.bottomRightRadius || node.bottomLeftRadius) {
+      n.borderRadius = {
+        topLeft: dual(node.topLeftRadius || 0),
+        topRight: dual(node.topRightRadius || 0),
+        bottomRight: dual(node.bottomRightRadius || 0),
+        bottomLeft: dual(node.bottomLeftRadius || 0)
+      };
+    }
+
+    // Fills
+    if (node.fills && node.fills.length > 0) {
+      n.fills = [];
+      for (var i = 0; i < node.fills.length; i++) {
+        var f = node.fills[i];
+        if (f.visible === false) continue;
+        var fill = { type: f.type };
+        if (f.type === 'SOLID' && f.color) {
+          fill.hex = colorToHex(f.color);
+          fill.rgba = colorToRgba(f.color, f.opacity);
+          if (f.opacity !== undefined && f.opacity < 1) fill.opacity = parseFloat(f.opacity.toFixed(2));
+        }
+        if (f.type === 'GRADIENT_LINEAR' || f.type === 'GRADIENT_RADIAL') {
+          fill.stops = f.gradientStops ? f.gradientStops.map(function(s) {
+            return { color: colorToHex(s.color), position: parseFloat(s.position.toFixed(2)) };
+          }) : [];
+        }
+        if (f.type === 'IMAGE') fill.scaleMode = f.scaleMode;
+        n.fills.push(fill);
+      }
+      if (n.fills.length === 0) delete n.fills;
+    }
+
+    // Strokes
+    if (node.strokes && node.strokes.length > 0) {
+      n.strokes = [];
+      for (var i = 0; i < node.strokes.length; i++) {
+        var s = node.strokes[i];
+        if (s.visible === false) continue;
+        var stroke = { type: s.type };
+        if (s.type === 'SOLID' && s.color) {
+          stroke.hex = colorToHex(s.color);
+          stroke.rgba = colorToRgba(s.color, s.opacity);
+        }
+        n.strokes.push(stroke);
+      }
+      if (n.strokes.length === 0) delete n.strokes;
+      if (node.strokeWeight) n.strokeWeight = dual(node.strokeWeight);
+      if (node.strokeAlign) n.strokeAlign = node.strokeAlign;
+    }
+
+    // Typography
+    if (node.type === 'TEXT') {
+      n.text = { content: node.characters };
+      if (node.fontName && node.fontName !== figma.mixed) {
+        n.text.fontFamily = node.fontName.family;
+        n.text.fontStyle = node.fontName.style;
+      }
+      if (node.fontSize && node.fontSize !== figma.mixed) n.text.fontSize = dual(node.fontSize);
+      if (node.fontWeight && node.fontWeight !== figma.mixed) n.text.fontWeight = node.fontWeight;
+      if (node.lineHeight && node.lineHeight !== figma.mixed) {
+        if (node.lineHeight.unit === 'PIXELS') n.text.lineHeight = dual(node.lineHeight.value);
+        else if (node.lineHeight.unit === 'PERCENT') n.text.lineHeight = node.lineHeight.value + '%';
+        else n.text.lineHeight = 'auto';
+      }
+      if (node.letterSpacing && node.letterSpacing !== figma.mixed) {
+        if (node.letterSpacing.unit === 'PIXELS') n.text.letterSpacing = dual(node.letterSpacing.value);
+        else if (node.letterSpacing.unit === 'PERCENT') n.text.letterSpacing = node.letterSpacing.value + '%';
+      }
+      if (node.textAlignHorizontal) n.text.textAlign = node.textAlignHorizontal.toLowerCase();
+      if (node.textDecoration && node.textDecoration !== 'NONE' && node.textDecoration !== figma.mixed) {
+        n.text.textDecoration = node.textDecoration.toLowerCase();
+      }
+      if (node.textCase && node.textCase !== 'ORIGINAL' && node.textCase !== figma.mixed) {
+        n.text.textTransform = node.textCase.toLowerCase();
+      }
+    }
+
+    // Effects
+    if (node.effects && node.effects.length > 0) {
+      n.effects = [];
+      for (var i = 0; i < node.effects.length; i++) {
+        var e = node.effects[i];
+        if (e.visible === false) continue;
+        var eff = { type: e.type };
+        if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
+          eff.x = dual(e.offset.x); eff.y = dual(e.offset.y);
+          eff.blur = dual(e.radius); eff.spread = dual(e.spread || 0);
+          if (e.color) eff.color = colorToRgba(e.color, e.color.a);
+        }
+        if (e.type === 'LAYER_BLUR' || e.type === 'BACKGROUND_BLUR') {
+          eff.blur = dual(e.radius);
+        }
+        n.effects.push(eff);
+      }
+      if (n.effects.length === 0) delete n.effects;
+    }
+
+    // Constraints
+    if (node.constraints) {
+      n.constraints = { horizontal: node.constraints.horizontal, vertical: node.constraints.vertical };
+    }
+
+    // Clip content
+    if (node.clipsContent) n.clipsContent = true;
+
+    // Component info
+    if (node.type === 'INSTANCE' && node.mainComponent) {
+      n.component = { name: node.mainComponent.name, id: node.mainComponent.id };
+      if (node.mainComponent.parent && node.mainComponent.parent.type === 'COMPONENT_SET') {
+        n.component.set = node.mainComponent.parent.name;
+      }
+      // Overridden properties
+      try {
+        var overrides = node.overrides;
+        if (overrides && overrides.length > 0) {
+          n.component.overrideCount = overrides.length;
+        }
+      } catch(e) {}
+    }
+    if (node.type === 'COMPONENT') {
+      n.component = { name: node.name, id: node.id, isDefinition: true };
+      if (node.description) n.component.description = node.description;
+    }
+
+    // Variable bindings
+    if (node.boundVariables) {
+      var vars = {};
+      var bindings = node.boundVariables;
+      Object.keys(bindings).forEach(function(prop) {
+        var binding = bindings[prop];
+        if (!binding) return;
+        var entries = Array.isArray(binding) ? binding : [binding];
+        entries.forEach(function(b) {
+          if (!b || !b.id) return;
+          try {
+            var v = figma.variables.getVariableById(b.id);
+            if (v) {
+              var info = { name: v.name };
+              try {
+                var modeIds = Object.keys(v.valuesByMode);
+                if (modeIds.length > 0) {
+                  var val = v.valuesByMode[modeIds[0]];
+                  if (val !== undefined) {
+                    if (typeof val === 'object' && val.r !== undefined) {
+                      info.value = colorToHex(val);
+                    } else if (typeof val === 'object' && val.id) {
+                      try {
+                        var alias = figma.variables.getVariableById(val.id);
+                        if (alias) info.value = alias.name + ' (alias)';
+                      } catch(e2) { info.value = 'alias'; }
+                    } else {
+                      info.value = val;
+                    }
+                  }
+                }
+                if (modeIds.length > 1) {
+                  info.modes = {};
+                  for (var mi = 0; mi < modeIds.length; mi++) {
+                    var mVal = v.valuesByMode[modeIds[mi]];
+                    try {
+                      var collection = figma.variables.getVariableCollectionById(v.variableCollectionId);
+                      var modeName = collection ? collection.modes.find(function(m) { return m.modeId === modeIds[mi]; }) : null;
+                      var mKey = modeName ? modeName.name : modeIds[mi];
+                      if (typeof mVal === 'object' && mVal.r !== undefined) {
+                        info.modes[mKey] = colorToHex(mVal);
+                      } else if (typeof mVal === 'object' && mVal.id) {
+                        try {
+                          var aliasM = figma.variables.getVariableById(mVal.id);
+                          info.modes[mKey] = aliasM ? aliasM.name : 'alias';
+                        } catch(e3) { info.modes[mKey] = 'alias'; }
+                      } else {
+                        info.modes[mKey] = mVal;
+                      }
+                    } catch(e4) {}
+                  }
+                }
+              } catch(e5) {}
+              vars[prop] = info;
+            }
+          } catch(e) {}
+        });
+      });
+      if (Object.keys(vars).length > 0) n.variables = vars;
+    }
+
+    // Children — recurse
+    if (node.children && node.children.length > 0) {
+      n.children = [];
+      for (var i = 0; i < node.children.length; i++) {
+        var child = extractNode(node.children[i], depth + 1);
+        if (child) n.children.push(child);
+      }
+    }
+
+    return n;
+  }
+
+  // Collect unique tokens used across the tree
+  function collectTokens(tree) {
+    var colors = {};
+    var fonts = {};
+    var spacings = {};
+    var radii = {};
+    var shadows = {};
+
+    function walk(n) {
+      // Colors from fills
+      if (n.fills) n.fills.forEach(function(f) {
+        if (f.hex) colors[f.hex] = (colors[f.hex] || 0) + 1;
+      });
+      // Colors from strokes
+      if (n.strokes) n.strokes.forEach(function(s) {
+        if (s.hex) colors[s.hex] = (colors[s.hex] || 0) + 1;
+      });
+      // Typography
+      if (n.text) {
+        if (n.text.fontFamily) {
+          var key = n.text.fontFamily + ' ' + (n.text.fontStyle || 'Regular');
+          if (n.text.fontSize) key += ' / ' + n.text.fontSize.px + 'px';
+          fonts[key] = (fonts[key] || 0) + 1;
+        }
+      }
+      // Spacing from layout
+      if (n.layout) {
+        if (n.layout.gap && n.layout.gap.px > 0) spacings[n.layout.gap.px + 'px'] = (spacings[n.layout.gap.px + 'px'] || 0) + 1;
+        if (n.layout.padding) {
+          var p = n.layout.padding;
+          [p.top, p.right, p.bottom, p.left].forEach(function(v) {
+            if (v && v.px > 0) spacings[v.px + 'px'] = (spacings[v.px + 'px'] || 0) + 1;
+          });
+        }
+      }
+      // Radii
+      if (n.borderRadius) {
+        if (n.borderRadius.px !== undefined) {
+          radii[n.borderRadius.px + 'px'] = (radii[n.borderRadius.px + 'px'] || 0) + 1;
+        } else {
+          [n.borderRadius.topLeft, n.borderRadius.topRight, n.borderRadius.bottomRight, n.borderRadius.bottomLeft].forEach(function(v) {
+            if (v && v.px > 0) radii[v.px + 'px'] = (radii[v.px + 'px'] || 0) + 1;
+          });
+        }
+      }
+      // Shadows
+      if (n.effects) n.effects.forEach(function(e) {
+        if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
+          var key = e.x.px + 'px ' + e.y.px + 'px ' + e.blur.px + 'px ' + e.spread.px + 'px ' + (e.color || '');
+          shadows[key] = (shadows[key] || 0) + 1;
+        }
+      });
+      // Recurse
+      if (n.children) n.children.forEach(walk);
+    }
+    walk(tree);
+
+    return {
+      colors: Object.keys(colors).sort(function(a,b) { return colors[b] - colors[a]; }).map(function(c) { return { value: c, count: colors[c] }; }),
+      typography: Object.keys(fonts).sort(function(a,b) { return fonts[b] - fonts[a]; }).map(function(f) { return { value: f, count: fonts[f] }; }),
+      spacing: Object.keys(spacings).sort(function(a,b) { return parseInt(a) - parseInt(b); }).map(function(s) { return { value: s, rem: toRem(parseInt(s)) + 'rem', count: spacings[s] }; }),
+      radii: Object.keys(radii).sort(function(a,b) { return parseInt(a) - parseInt(b); }).map(function(r) { return { value: r, rem: toRem(parseInt(r)) + 'rem', count: radii[r] }; }),
+      shadows: Object.keys(shadows).map(function(s) { return { value: s, count: shadows[s] }; })
+    };
+  }
+
+  // Count total nodes
+  function countNodes(n) {
+    var c = 1;
+    if (n.children) n.children.forEach(function(ch) { c += countNodes(ch); });
+    return c;
+  }
+
+  __TARGET_SELECTOR__
+
+  var tree = extractNode(node, 0);
+  var tokens = collectTokens(tree);
+  var total = countNodes(tree);
+
+  return {
+    summary: {
+      name: node.name,
+      type: node.type,
+      totalNodes: total,
+      width: node.width ? Math.round(node.width) : undefined,
+      height: node.height ? Math.round(node.height) : undefined,
+      isComponent: node.type === 'COMPONENT' || node.type === 'COMPONENT_SET',
+      isInstance: node.type === 'INSTANCE'
+    },
+    tokens: tokens,
+    tree: tree
+  };
+})()`;
+
+function buildDocumentCode(target) {
+  if (target === 'selection') {
+    return DOCUMENT_CODE.replace('__TARGET_SELECTOR__',
+      "var sel = figma.currentPage.selection;\n  if (!sel || sel.length === 0) return { error: 'Nothing selected. Select a component or frame in Figma first.' };\n  var node = sel[0];"
+    );
+  }
+  // target is a node ID
+  return DOCUMENT_CODE.replace('__TARGET_SELECTOR__',
+    `var node = figma.getNodeById('${target}');\n  if (!node) return { error: 'Node ${target} not found.' };`
+  );
+}
+
+function formatDocument(doc) {
+  const lines = [];
+
+  // Header
+  lines.push(chalk.bold.underline(`Component Documentation: ${doc.summary.name}`));
+  lines.push('');
+
+  // Summary
+  lines.push(chalk.bold('Overview'));
+  lines.push(`  Type:        ${doc.summary.type}`);
+  lines.push(`  Size:        ${doc.summary.width}×${doc.summary.height}px`);
+  lines.push(`  Total nodes: ${doc.summary.totalNodes}`);
+  if (doc.summary.isComponent) lines.push(`  Role:        Component definition`);
+  if (doc.summary.isInstance) lines.push(`  Role:        Component instance`);
+  lines.push('');
+
+  // Design tokens summary
+  lines.push(chalk.bold('Design Tokens'));
+  lines.push('');
+
+  if (doc.tokens.colors.length > 0) {
+    lines.push(chalk.cyan('  Colors'));
+    for (const c of doc.tokens.colors) {
+      lines.push(`    ${c.value}  (used ${c.count}×)`);
+    }
+  }
+
+  if (doc.tokens.typography.length > 0) {
+    lines.push(chalk.cyan('  Typography'));
+    for (const t of doc.tokens.typography) {
+      lines.push(`    ${t.value}  (${t.count}×)`);
+    }
+  }
+
+  if (doc.tokens.spacing.length > 0) {
+    lines.push(chalk.cyan('  Spacing'));
+    lines.push(`    ${doc.tokens.spacing.map(s => `${s.value} (${s.rem})`).join('  |  ')}`);
+  }
+
+  if (doc.tokens.radii.length > 0) {
+    lines.push(chalk.cyan('  Border Radii'));
+    lines.push(`    ${doc.tokens.radii.map(r => `${r.value} (${r.rem})`).join('  |  ')}`);
+  }
+
+  if (doc.tokens.shadows.length > 0) {
+    lines.push(chalk.cyan('  Shadows'));
+    for (const s of doc.tokens.shadows) {
+      lines.push(`    ${s.value}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(chalk.bold('Component Tree (JSON)'));
+  lines.push('');
+  lines.push(JSON.stringify(doc.tree, null, 2));
+
+  return lines.join('\n');
+}
+
+program
+  .command('document')
+  .description('Generate complete component documentation — recursive specs, tokens, and structured tree for coding agents')
+  .option('--json', 'Output raw JSON only (best for coding agents)')
+  .option('--node <id>', 'Document a specific node by ID')
+  .option('--link <url>', 'Document from a Figma selection link')
+  .option('--selection', 'Document the current selection (default)')
+  .option('--tokens-only', 'Output only the design tokens summary')
+  .addHelpText('after', `
+Examples:
+  fig document                       Document the selected component
+  fig document --json                JSON output for coding agents
+  fig document --node "123:456"      Document a specific node
+  fig document --link "https://..."  Document from a Figma link
+  fig document --tokens-only         Just the design tokens used
+`)
+  .action(async (options) => {
+    checkConnection();
+    const spinner = ora('Documenting component...').start();
+
+    try {
+      let target = 'selection';
+
+      if (options.link) {
+        const nodeId = parseNodeIdFromLink(options.link);
+        if (!nodeId) {
+          spinner.fail('Could not find a node ID in that link. Copy via right-click → "Copy link to selection" in Figma.');
+          process.exit(1);
+        }
+        target = nodeId;
+      } else if (options.node) {
+        target = options.node;
+      }
+
+      const code = buildDocumentCode(target);
+      const result = await daemonExec('eval', { code }, 120000);
+
+      if (result.error) {
+        spinner.fail(result.error);
+        process.exit(1);
+      }
+
+      spinner.succeed(`Documented "${result.summary.name}" — ${result.summary.totalNodes} nodes`);
+
+      if (options.tokensOnly) {
+        console.log(JSON.stringify(result.tokens, null, 2));
+      } else if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log('');
+        console.log(formatDocument(result));
+      }
+    } catch (e) {
+      spinner.fail(`Documentation failed: ${e.message}`);
       process.exit(1);
     }
   });

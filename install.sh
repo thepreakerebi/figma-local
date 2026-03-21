@@ -61,7 +61,7 @@ if [ -d "$HOME/.claude" ] && [ -d "$SKILLS_SRC" ]; then
   echo ""
   echo -e "  Installing Claude Code skills..."
   mkdir -p "$SKILLS_DIR"
-  for skill in figma-local figma-inspect figma-css figma-styles figma-measure; do
+  for skill in figma-local figma-inspect figma-css figma-styles figma-measure figma-document; do
     ln -sf "$SKILLS_SRC/$skill" "$SKILLS_DIR/$skill" 2>/dev/null || true
   done
   echo -e "  ${GREEN}✓${NC} Claude Code skills installed"

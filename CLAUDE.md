@@ -37,6 +37,9 @@ Control Figma Desktop with Claude Code. Direct connection — no API key, no MCP
 | "generate Tailwind" | `fig css --tailwind` |
 | "measure spacing between" | Select 2 elements, then `fig measure` |
 | "what styles does this frame use" | `fig styles "Frame Name"` |
+| "document this component" | `fig document` (selection) |
+| "document from link" | `fig document --link "https://..."` |
+| "document as JSON" | `fig document --json` |
 
 **Full command reference:** See REFERENCE.md
 
