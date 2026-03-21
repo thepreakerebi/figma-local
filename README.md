@@ -54,13 +54,13 @@ Gives you `fig` and `fig-start` globally on your PATH.
 ### curl (one-line)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thepreakerebi/figma-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/thepreakerebi/figma-local/main/install.sh | bash
 ```
 
 ### Homebrew
 
 ```bash
-brew tap thepreakerebi/figma-cli
+brew tap thepreakerebi/figma-local
 brew install figma-cli
 ```
 
@@ -73,7 +73,7 @@ npx figma-local read
 ### From source
 
 ```bash
-git clone https://github.com/thepreakerebi/figma-cli.git
+git clone https://github.com/thepreakerebi/figma-local.git
 cd figma-cli
 npm install && npm install -g .
 ```
@@ -335,19 +335,13 @@ figma-local ships as a Claude Code plugin with 5 skills that teach coding agents
 
 ### Install the skills
 
-```bash
-# Clone the repo (skip if you already have it)
-git clone https://github.com/thepreakerebi/figma-cli.git
+Install via [skills.sh](https://skills.sh):
 
-# Symlink skills into Claude Code's skills directory
-ln -sf "$(pwd)/figma-cli/skills/figma-local" ~/.claude/skills/figma-local
-ln -sf "$(pwd)/figma-cli/skills/figma-inspect" ~/.claude/skills/figma-inspect
-ln -sf "$(pwd)/figma-cli/skills/figma-css" ~/.claude/skills/figma-css
-ln -sf "$(pwd)/figma-cli/skills/figma-styles" ~/.claude/skills/figma-styles
-ln -sf "$(pwd)/figma-cli/skills/figma-measure" ~/.claude/skills/figma-measure
+```bash
+npx skills add thepreakerebi/figma-local
 ```
 
-Once installed, Claude Code automatically knows all `fig` commands and uses them when your tasks involve Figma designs. Start a new conversation for skills to take effect.
+Once installed, restart Claude Code. It automatically knows all `fig` commands and uses them when your tasks involve Figma designs.
 
 ---
 
@@ -385,7 +379,7 @@ Remove the plugin in Figma: Plugins → Development → right-click Figma Local 
 Issues and PRs welcome. For major changes, open an issue first to discuss.
 
 ```bash
-git clone https://github.com/thepreakerebi/figma-cli.git
+git clone https://github.com/thepreakerebi/figma-local.git
 cd figma-cli
 npm install
 node src/index.js --help
