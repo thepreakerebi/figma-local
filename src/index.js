@@ -10573,4 +10573,228 @@ program
     }
   });
 
+// ============ LIBRARY — access team library components & variables ============
+
+program
+  .command('library <action>')
+  .description('Access team library components and variables from other Figma files')
+  .option('--key <key>', 'Component key for importing')
+  .option('--name <name>', 'Filter by name (partial match)')
+  .option('--json', 'Output raw JSON')
+  .addHelpText('after', `
+Actions:
+  collections    List all available library variable collections
+  variables      List variables from a library collection (use --name to filter)
+  components     List available library components (use --name to filter)
+  import         Import a component by key (use --key)
+
+Examples:
+  fig library collections                    List all library variable collections
+  fig library variables                      List all library variables
+  fig library variables --name "color"       List variables matching "color"
+  fig library components                     List available library components
+  fig library components --name "button"     Find button components
+  fig library import --key "abc123..."       Import a component by its key
+  fig library import --key "abc123..." --name "MyButton"  Import and rename
+`)
+  .action(async (action, options) => {
+    checkConnection();
+    const spinner = ora('Accessing library...').start();
+
+    try {
+      if (action === 'collections') {
+        spinner.text = 'Fetching library variable collections...';
+        const code = `(async function() {
+          try {
+            var cols = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+            return cols.map(function(c) {
+              return { name: c.name, key: c.key, libraryName: c.libraryName };
+            });
+          } catch(e) {
+            return { error: e.message || 'Failed to fetch library collections. Make sure teamlibrary permission is enabled.' };
+          }
+        })()`;
+        const result = await daemonExec('eval', { code });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        spinner.succeed(`Found ${result.length} library variable collection${result.length !== 1 ? 's' : ''}`);
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          if (result.length === 0) {
+            console.log(chalk.yellow('No library variable collections found. Make sure you have libraries enabled in this file.'));
+          }
+          for (const col of result) {
+            console.log(`  ${chalk.cyan(col.name)} ${chalk.gray('from')} ${chalk.white(col.libraryName)}`);
+            console.log(`    ${chalk.gray('key:')} ${col.key}`);
+          }
+        }
+      } else if (action === 'variables') {
+        spinner.text = 'Fetching library variables...';
+        const nameFilter = options.name ? options.name.toLowerCase() : '';
+        const code = `(async function() {
+          try {
+            var cols = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+            var allVars = [];
+            for (var i = 0; i < cols.length; i++) {
+              try {
+                var vars = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(cols[i].key);
+                for (var j = 0; j < vars.length; j++) {
+                  allVars.push({
+                    name: vars[j].name,
+                    key: vars[j].key,
+                    resolvedType: vars[j].resolvedType,
+                    collection: cols[i].name,
+                    library: cols[i].libraryName
+                  });
+                }
+              } catch(e2) {}
+            }
+            ${nameFilter ? `allVars = allVars.filter(function(v) { return v.name.toLowerCase().indexOf('${nameFilter}') !== -1; });` : ''}
+            return allVars;
+          } catch(e) {
+            return { error: e.message || 'Failed to fetch library variables.' };
+          }
+        })()`;
+        const result = await daemonExec('eval', { code });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        spinner.succeed(`Found ${result.length} library variable${result.length !== 1 ? 's' : ''}`);
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          if (result.length === 0) {
+            console.log(chalk.yellow('No variables found.' + (nameFilter ? ` Try a different search term.` : '')));
+          }
+          let currentCollection = '';
+          for (const v of result) {
+            const collLabel = `${v.collection} (${v.library})`;
+            if (collLabel !== currentCollection) {
+              currentCollection = collLabel;
+              console.log(chalk.cyan(`\n  ${collLabel}`));
+            }
+            console.log(`    ${chalk.white(v.name)} ${chalk.gray(`[${v.resolvedType}]`)} ${chalk.gray('key:')} ${v.key}`);
+          }
+        }
+      } else if (action === 'components') {
+        spinner.text = 'Fetching library components...';
+        const nameFilter = options.name ? options.name.toLowerCase() : '';
+        const code = `(async function() {
+          try {
+            var collections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+            var libraryNames = collections.map(function(c) { return c.libraryName; });
+          } catch(e) { var libraryNames = []; }
+          try {
+            // Get components from the assets panel search
+            var components = [];
+            // Try to find components by listing component sets and instances on the current page
+            function findComponents(node) {
+              if (node.type === 'INSTANCE' && node.mainComponent) {
+                try {
+                  var mc = node.mainComponent;
+                  var parent = mc.parent;
+                  components.push({
+                    name: mc.name,
+                    key: mc.key,
+                    componentSetName: parent && parent.type === 'COMPONENT_SET' ? parent.name : null,
+                    description: mc.description || '',
+                    remote: mc.remote
+                  });
+                } catch(e) {}
+              }
+              if ('children' in node) {
+                for (var i = 0; i < node.children.length; i++) {
+                  findComponents(node.children[i]);
+                }
+              }
+            }
+            findComponents(figma.currentPage);
+            // Deduplicate by key
+            var seen = {};
+            var unique = [];
+            for (var i = 0; i < components.length; i++) {
+              if (!seen[components[i].key]) {
+                seen[components[i].key] = true;
+                unique.push(components[i]);
+              }
+            }
+            ${nameFilter ? `unique = unique.filter(function(c) { return c.name.toLowerCase().indexOf('${nameFilter}') !== -1 || (c.componentSetName && c.componentSetName.toLowerCase().indexOf('${nameFilter}') !== -1); });` : ''}
+            return { components: unique, note: unique.length === 0 ? 'No library components found on this page. Drag some components from the Assets panel first, or use fig library import --key <key> if you have the component key.' : null };
+          } catch(e) {
+            return { error: e.message || 'Failed to fetch library components.' };
+          }
+        })()`;
+        const result = await daemonExec('eval', { code });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        const comps = result.components || [];
+        spinner.succeed(`Found ${comps.length} component${comps.length !== 1 ? 's' : ''} on this page`);
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          if (result.note) {
+            console.log(chalk.yellow(`  ${result.note}`));
+          }
+          for (const c of comps) {
+            const setLabel = c.componentSetName ? chalk.gray(` (set: ${c.componentSetName})`) : '';
+            const remoteLabel = c.remote ? chalk.blue(' [library]') : chalk.gray(' [local]');
+            console.log(`  ${chalk.white(c.name)}${setLabel}${remoteLabel}`);
+            console.log(`    ${chalk.gray('key:')} ${c.key}`);
+            if (c.description) console.log(`    ${chalk.gray('desc:')} ${c.description}`);
+          }
+        }
+      } else if (action === 'import') {
+        if (!options.key) {
+          spinner.fail('--key is required. Get the key from: fig library components, or fig library variables');
+          process.exit(1);
+        }
+        spinner.text = `Importing component ${options.key}...`;
+        const importName = options.name || '';
+        const code = `(async function() {
+          try {
+            var component = await figma.importComponentByKeyAsync('${options.key}');
+            if (!component) return { error: 'Component not found for key: ${options.key}' };
+            // Create an instance
+            var instance = component.createInstance();
+            // Place it in the center of the viewport
+            var vp = figma.viewport.center;
+            instance.x = Math.round(vp.x);
+            instance.y = Math.round(vp.y);
+            ${importName ? `instance.name = '${importName}';` : ''}
+            figma.currentPage.selection = [instance];
+            return {
+              name: instance.name,
+              id: instance.id,
+              componentName: component.name,
+              w: Math.round(instance.width),
+              h: Math.round(instance.height)
+            };
+          } catch(e) {
+            return { error: e.message || 'Failed to import component. Check the key is valid.' };
+          }
+        })()`;
+        const result = await daemonExec('eval', { code });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        spinner.succeed(`Imported "${result.componentName}" as ${result.name} (${result.w}x${result.h})`);
+        console.log(`  ${chalk.gray('id:')} ${result.id}`);
+        console.log(chalk.gray('  Component is now selected on the canvas.'));
+      } else {
+        spinner.fail(`Unknown action: ${action}. Use: collections, variables, components, import`);
+        process.exit(1);
+      }
+    } catch (e) {
+      spinner.fail(`Library access failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
 program.parse();
