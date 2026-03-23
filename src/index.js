@@ -8560,14 +8560,14 @@ Examples:
           if (!sel || sel.length === 0) return { error: 'Nothing selected in Figma. Select a frame or layer first.' };
           const node = sel[0];
           function walk(n, depth) {
-            if (depth > 4) return { type: n.type, name: n.name, truncated: true };
+            if (depth > 20) return { type: n.type, name: n.name };
             const obj = { type: n.type, name: n.name };
             if (n.width) obj.w = Math.round(n.width);
             if (n.height) obj.h = Math.round(n.height);
-            if (n.type === 'TEXT') obj.text = n.characters.slice(0, 100);
+            if (n.type === 'TEXT') obj.text = n.characters;
             if (n.fills && n.fills.length) obj.fills = n.fills.map(f => f.type === 'SOLID' ? { r: Math.round(f.color.r*255), g: Math.round(f.color.g*255), b: Math.round(f.color.b*255) } : { type: f.type });
             if (n.cornerRadius) obj.radius = n.cornerRadius;
-            if (n.children) obj.children = n.children.slice(0, 20).map(c => walk(c, depth + 1));
+            if (n.children) obj.children = n.children.map(c => walk(c, depth + 1));
             return obj;
           }
           return { selected: sel.length, node: walk(node, 0) };
@@ -8598,14 +8598,14 @@ Examples:
           const node = figma.getNodeById('${nodeId}');
           if (!node) return { error: 'Node ${nodeId} not found on the current page.' };
           function walk(n, depth) {
-            if (depth > 4) return { type: n.type, name: n.name, truncated: true };
+            if (depth > 20) return { type: n.type, name: n.name };
             const obj = { type: n.type, name: n.name };
             if (n.width) obj.w = Math.round(n.width);
             if (n.height) obj.h = Math.round(n.height);
-            if (n.type === 'TEXT') obj.text = n.characters.slice(0, 100);
+            if (n.type === 'TEXT') obj.text = n.characters;
             if (n.fills && n.fills.length) obj.fills = n.fills.map(f => f.type === 'SOLID' ? { r: Math.round(f.color.r*255), g: Math.round(f.color.g*255), b: Math.round(f.color.b*255) } : { type: f.type });
             if (n.cornerRadius) obj.radius = n.cornerRadius;
-            if (n.children) obj.children = n.children.slice(0, 20).map(c => walk(c, depth + 1));
+            if (n.children) obj.children = n.children.map(c => walk(c, depth + 1));
             return obj;
           }
           return { nodeId: '${nodeId}', node: walk(node, 0) };
@@ -8999,7 +8999,7 @@ const INSPECT_CODE = `(function() {
     // Children summary
     if (node.children && node.children.length > 0) {
       spec.childCount = node.children.length;
-      spec.children = node.children.slice(0, 30).map(function(c) {
+      spec.children = node.children.map(function(c) {
         return { name: c.name, type: c.type, w: c.width ? Math.round(c.width) : undefined, h: c.height ? Math.round(c.height) : undefined };
       });
     }
@@ -9007,9 +9007,9 @@ const INSPECT_CODE = `(function() {
     return spec;
   }
 
-  // Inspect all selected nodes (up to 10)
+  // Inspect all selected nodes
   var results = [];
-  var count = Math.min(sel.length, 10);
+  var count = sel.length;
   for (var i = 0; i < count; i++) {
     results.push(inspectNode(sel[i]));
   }
@@ -9083,7 +9083,7 @@ Examples:
           ${options.node ? `node = figma.getNodeById('${options.node}');` : ''}
           ${options.link ? `node = figma.getNodeById('${parseNodeIdFromLink(options.link)}');` : ''}
           if (!node || !node.children) return [];
-          return node.children.slice(0, 30).map(function(c) { return c.id; });
+          return node.children.map(function(c) { return c.id; });
         })()`;
         const childIds = await daemonExec('eval', { code: childIdsCode });
         if (Array.isArray(childIds)) {
@@ -9199,7 +9199,7 @@ function formatInspectSpec(spec) {
     if (t.textAlign) lines.push(`  Text align:     ${t.textAlign}`);
     if (t.textDecoration) lines.push(`  Decoration:     ${t.textDecoration}`);
     if (t.textTransform) lines.push(`  Transform:      ${t.textTransform}`);
-    if (t.content) lines.push(`  Content:        "${t.content.slice(0, 80)}${t.content.length > 80 ? '...' : ''}"`);
+    if (t.content) lines.push(`  Content:        "${t.content}"`);
   }
 
   // Effects
@@ -9530,7 +9530,7 @@ function formatCSS(node) {
   }
   lines.push('}');
   if (node.text) {
-    lines.push(chalk.gray(`/* Content: "${node.text.slice(0, 60)}${node.text.length > 60 ? '...' : ''}" */`));
+    lines.push(chalk.gray(`/* Content: "${node.text}" */`));
   }
   return lines.join('\n');
 }
@@ -9610,7 +9610,7 @@ function formatTailwind(node) {
   const lines = [];
   lines.push(chalk.gray(`{/* ${node.name} */}`));
   lines.push(`className="${classes.join(' ')}"`);
-  if (node.text) lines.push(chalk.gray(`{/* "${node.text.slice(0, 60)}${node.text.length > 60 ? '...' : ''}" */}`));
+  if (node.text) lines.push(chalk.gray(`{/* "${node.text}" */}`));
   return lines.join('\n');
 }
 
@@ -9889,7 +9889,7 @@ const DOCUMENT_CODE = `(function() {
   }
 
   function extractNode(node, depth) {
-    if (depth > 15) return null;
+    if (depth > 30) return null;
     var n = { name: node.name, type: node.type };
 
     // Dimensions
