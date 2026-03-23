@@ -123,11 +123,14 @@ for arg in "$@"; do
 done
 
 if [ "$1" = "--setup" ]; then
-    printf "${BOLD}Enter the path to your figma-cli repo:${NC} "
+    printf "${BOLD}Enter the absolute path to your figma-local folder:${NC} "
     read -r repo_path < /dev/tty
     repo_path="${repo_path/#\~/$HOME}"
-    if [ ! -f "$repo_path/src/index.js" ]; then
-        echo -e "${RED}Not a valid figma-cli repo:${NC} $repo_path"
+    if [[ "$repo_path" != /* ]]; then
+        repo_path="$(cd "$repo_path" 2>/dev/null && pwd)"
+    fi
+    if [ -z "$repo_path" ] || [ ! -f "$repo_path/src/index.js" ]; then
+        echo -e "${RED}Not a valid figma-local folder.${NC} Expected src/index.js inside it."
         exit 1
     fi
     save_repo_path "$repo_path"
@@ -139,21 +142,34 @@ fi
 REPO_PATH=$(get_repo_path)
 
 if [ -z "$REPO_PATH" ] || [ ! -d "$REPO_PATH" ]; then
-    # Try to find it relative to this script
+    # Try to find it relative to this script (works for both git clone and npm -g installs)
     SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
     if [ -f "$SCRIPT_DIR/src/index.js" ]; then
         REPO_PATH="$SCRIPT_DIR"
         save_repo_path "$REPO_PATH"
     else
-        echo -e "${YELLOW}figma-cli repo not configured.${NC}"
-        printf "${BOLD}Enter the path to your figma-cli repo:${NC} "
-        read -r REPO_PATH < /dev/tty
-        REPO_PATH="${REPO_PATH/#\~/$HOME}"
-        if [ ! -f "$REPO_PATH/src/index.js" ]; then
-            echo -e "${RED}Not a valid figma-cli repo:${NC} $REPO_PATH"
-            exit 1
+        # Try npm global install location
+        NPM_GLOBAL="$(npm root -g 2>/dev/null)/figma-local"
+        if [ -f "$NPM_GLOBAL/src/index.js" ]; then
+            REPO_PATH="$NPM_GLOBAL"
+            save_repo_path "$REPO_PATH"
+        else
+            echo -e "${YELLOW}figma-local repo not configured.${NC}"
+            echo -e "${DIM}If you installed via npm, run: fig-start --setup${NC}"
+            printf "${BOLD}Enter the absolute path to your figma-local folder:${NC} "
+            read -r REPO_PATH < /dev/tty
+            REPO_PATH="${REPO_PATH/#\~/$HOME}"
+            # Convert relative paths to absolute
+            if [[ "$REPO_PATH" != /* ]]; then
+                REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)"
+            fi
+            if [ -z "$REPO_PATH" ] || [ ! -f "$REPO_PATH/src/index.js" ]; then
+                echo -e "${RED}Not a valid figma-local folder.${NC} Expected src/index.js inside it."
+                echo -e "${DIM}Tip: use the full path, e.g. /Users/yourname/figma-local${NC}"
+                exit 1
+            fi
+            save_repo_path "$REPO_PATH"
         fi
-        save_repo_path "$REPO_PATH"
     fi
 fi
 

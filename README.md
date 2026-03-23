@@ -80,7 +80,7 @@ npx figma-local read
 
 ```bash
 git clone https://github.com/thepreakerebi/figma-local.git
-cd figma-cli
+cd figma-local
 npm install && npm install -g .
 ```
 
@@ -99,32 +99,66 @@ npm install && npm install -g .
 
 ## Setup (one time only)
 
-### 1. Import the Figma plugin
+### Step 1 — Install the CLI
 
-1. Open **Figma Desktop**
-2. Hamburger menu → **Plugins → Development → Import plugin from manifest...**
-3. Navigate to the `plugin/` folder in this repo (or `$(npm root -g)/figma-local/plugin/`)
-4. Select `manifest.json` → click **Open**
-5. Right-click **Figma Local** in the plugin list → **Add to toolbar**
-
-### 2. Connect
+Pick one of the install methods above (npm recommended):
 
 ```bash
-fig-start --safe
+npm install -g figma-local
 ```
 
-This starts the daemon, waits for you to click Figma Local in Figma, then launches Claude Code.
+Verify it worked:
+
+```bash
+fig --help
+```
+
+### Step 2 — Import the Figma plugin into Figma Desktop
+
+The plugin lets figma-local talk to Figma. You only need to do this once per Figma account.
+
+1. Open **Figma Desktop** (not the browser — the desktop app)
+2. Open any design file
+3. Click the **hamburger menu** (☰) in the top-left corner
+4. Go to **Plugins → Development → Import plugin from manifest...**
+5. In the file picker, navigate to the plugin folder:
+   - If you installed via **npm**: run `echo "$(npm root -g)/figma-local/plugin"` in your terminal to get the path, then navigate there
+   - If you cloned the **repo**: go to `figma-local/plugin/` in the cloned folder
+6. Select `manifest.json` → click **Open**
+7. You should see **"Figma Local"** appear in your plugin list
+8. *(Optional but recommended)* Right-click **Figma Local** in the plugin list → **Add to toolbar** for one-click access
+
+### Step 3 — Connect and verify
+
+1. In Figma, start the plugin: **Plugins → Development → Figma Local** (or click it in your toolbar)
+2. You should see a small widget that says **"Figma Local"** with a connecting status
+3. In your terminal, run:
+
+```bash
+fig connect --safe
+```
+
+4. The plugin widget should show a **green dot** and say **"Connected"**
+5. Try reading your canvas:
+
+```bash
+fig read
+```
+
+If you see a list of frames, you're all set!
 
 ---
 
 ## Every session after that
 
-```
-1. Open Figma → click Figma Local in the toolbar
-2. In terminal: fig-start --safe
+```bash
+# 1. Open Figma Desktop and your design file
+# 2. Click "Figma Local" in the toolbar (or Plugins → Development → Figma Local)
+# 3. In your terminal:
+fig-start --safe
 ```
 
-Claude Code reads `CLAUDE.md` and knows every command automatically.
+This connects to Figma and launches Claude Code. Claude reads `CLAUDE.md` and knows every `fig` command automatically.
 
 ---
 
@@ -398,7 +432,7 @@ Issues and PRs welcome. For major changes, open an issue first to discuss.
 
 ```bash
 git clone https://github.com/thepreakerebi/figma-local.git
-cd figma-cli
+cd figma-local
 npm install
 node src/index.js --help
 npm test
