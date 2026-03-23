@@ -10581,27 +10581,34 @@ program
   .option('--key <key>', 'Component key for importing')
   .option('--name <name>', 'Filter by name (partial match)')
   .option('--json', 'Output raw JSON')
+  .option('--api', 'Use Figma REST API instead of plugin (for index)')
+  .option('--token <token>', 'Figma personal access token (for --api)')
+  .option('--file <url>', 'Figma file URL (for --api)')
+  .option('--page <pageName>', 'Index only a specific page (for index)')
   .addHelpText('after', `
 Actions:
   collections    List all available library variable collections
   variables      List variables from a library collection (use --name to filter)
   components     List available library components on current page (use --name to filter)
-  index          Scan the current open file and save all components to a local index
+  index          Scan and save all components to a local index
   search         Search indexed libraries for components (use --name to filter)
   import         Import a component by key (use --key)
   list           List all indexed libraries
 
+Index modes:
+  fig library index                                           Scan current file via plugin (small files)
+  fig library index --page "Buttons"                          Scan only one page (large files)
+  fig library index --api --token "figd_..." --file "URL"     Use REST API (best for large files)
+  fig library index --api --file "URL"                        Use saved token
+
 Examples:
   fig library collections                    List all library variable collections
-  fig library variables                      List all library variables
   fig library variables --name "color"       List variables matching "color"
-  fig library components                     List available library components
   fig library components --name "button"     Find button components
-  fig library index                          Index all components in the current open file
+  fig library index --api --token "figd_..." --file "https://www.figma.com/design/ABC/..."
   fig library search --name "button"         Search indexed libraries for "button"
   fig library list                           List all indexed libraries
   fig library import --key "abc123..."       Import a component by its key
-  fig library import --key "abc123..." --name "MyButton"  Import and rename
 `)
   .action(async (action, options) => {
     checkConnection();
@@ -10794,13 +10801,214 @@ Examples:
         console.log(`  ${chalk.gray('id:')} ${result.id}`);
         console.log(chalk.gray('  Component is now selected on the canvas.'));
       } else if (action === 'index') {
-        spinner.text = 'Scanning all pages for components...';
-        const code = `(function() {
+        // Helper to save index data and print summary
+        function saveIndexAndPrint(result, opts) {
+          const libDir = join(homedir(), '.figma-local', 'libraries');
+          mkdirSync(libDir, { recursive: true });
+          const safeName = result.fileName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+          const libFile = join(libDir, `${safeName}.json`);
+
+          // If file exists and we're doing page-by-page, merge
+          let existingComponents = [];
+          let existingPages = new Set();
+          if (opts.page && existsSync(libFile)) {
+            try {
+              const existing = JSON.parse(readFileSync(libFile, 'utf8'));
+              // Keep components from OTHER pages
+              existingComponents = (existing.components || []).filter(c => c.page !== opts.page);
+              existing.components.forEach(c => existingPages.add(c.page));
+            } catch (e) { /* fresh start */ }
+          }
+          const mergedComponents = [...existingComponents, ...result.components];
+          result.components.forEach(c => existingPages.add(c.page));
+
+          const indexData = {
+            fileName: result.fileName,
+            fileKey: result.fileKey || '',
+            indexedAt: new Date().toISOString(),
+            pageCount: opts.page ? existingPages.size : result.pageCount,
+            componentCount: mergedComponents.length,
+            components: mergedComponents
+          };
+          writeFileSync(libFile, JSON.stringify(indexData, null, 2));
+          return { indexData, libFile };
+        }
+
+        function printIndexSummary(indexData, libFile, opts) {
+          console.log(`  ${chalk.gray('Saved to:')} ${libFile}`);
+          if (opts.json) {
+            console.log(JSON.stringify(indexData, null, 2));
+          } else {
+            const sets = {};
+            const standalone = [];
+            for (const c of indexData.components) {
+              if (c.componentSet) {
+                if (!sets[c.componentSet]) sets[c.componentSet] = [];
+                sets[c.componentSet].push(c);
+              } else {
+                standalone.push(c);
+              }
+            }
+            if (Object.keys(sets).length > 0) {
+              console.log(chalk.cyan('\n  Component Sets:'));
+              for (const [setName, variants] of Object.entries(sets)) {
+                console.log(`    ${chalk.white(setName)} ${chalk.gray(`(${variants.length} variant${variants.length !== 1 ? 's' : ''})`)}`);
+              }
+            }
+            if (standalone.length > 0) {
+              console.log(chalk.cyan('\n  Standalone Components:'));
+              for (const c of standalone.slice(0, 50)) {
+                console.log(`    ${chalk.white(c.name)} ${chalk.gray(`[${c.page}]`)}`);
+              }
+              if (standalone.length > 50) {
+                console.log(chalk.gray(`    ... and ${standalone.length - 50} more`));
+              }
+            }
+          }
+        }
+
+        // ---- REST API mode ----
+        if (options.api) {
+          // Get or save token
+          const configDir = join(homedir(), '.figma-local');
+          mkdirSync(configDir, { recursive: true });
+          const tokenFile = join(configDir, 'figma-token');
+          let token = options.token || '';
+          if (!token && existsSync(tokenFile)) {
+            token = readFileSync(tokenFile, 'utf8').trim();
+          }
+          if (!token) {
+            spinner.fail('Figma token required. Get one from: Figma → Settings → Personal Access Tokens\nThen run: fig library index --api --token "figd_..." --file "URL"');
+            process.exit(1);
+          }
+          // Save token for future use
+          if (options.token) {
+            writeFileSync(tokenFile, token);
+          }
+
+          if (!options.file) {
+            spinner.fail('--file is required with --api. Provide a Figma file URL.\nExample: fig library index --api --file "https://www.figma.com/design/ABC123/MyFile"');
+            process.exit(1);
+          }
+
+          // Extract file key from URL
+          const fileKeyMatch = options.file.match(/(?:file|design)\/([a-zA-Z0-9]+)/);
+          if (!fileKeyMatch) {
+            spinner.fail('Could not extract file key from URL. Use a URL like: https://www.figma.com/design/ABC123/MyFile');
+            process.exit(1);
+          }
+          const fileKey = fileKeyMatch[1];
+
+          spinner.text = `Fetching file metadata from Figma API...`;
+
+          // Fetch the file from the REST API
+          const https = await import('https');
+          function figmaApiGet(endpoint) {
+            return new Promise((resolve, reject) => {
+              const url = `https://api.figma.com/v1${endpoint}`;
+              const req = https.get(url, { headers: { 'X-Figma-Token': token } }, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                  if (res.statusCode === 403) {
+                    reject(new Error('Access denied. Check your token has read access to this file.'));
+                  } else if (res.statusCode === 404) {
+                    reject(new Error('File not found. Check the URL is correct.'));
+                  } else if (res.statusCode !== 200) {
+                    reject(new Error(`Figma API returned ${res.statusCode}: ${data.slice(0, 200)}`));
+                  } else {
+                    try { resolve(JSON.parse(data)); }
+                    catch (e) { reject(new Error('Invalid JSON response from Figma API')); }
+                  }
+                });
+              });
+              req.on('error', reject);
+            });
+          }
+
           try {
-            var components = [];
-            var pages = figma.root.children;
-            for (var p = 0; p < pages.length; p++) {
-              var page = pages[p];
+            // Get file components via the components endpoint (lightweight)
+            spinner.text = 'Fetching components from Figma API...';
+            const compData = await figmaApiGet(`/files/${fileKey}/components`);
+
+            const components = [];
+            if (compData.meta && compData.meta.components) {
+              for (const comp of compData.meta.components) {
+                const c = {
+                  name: comp.name,
+                  key: comp.key,
+                  id: comp.node_id,
+                  page: comp.containing_frame ? comp.containing_frame.pageName || '' : '',
+                  description: comp.description || '',
+                };
+                if (comp.containing_frame && comp.containing_frame.name) {
+                  // The containing_frame for component set variants shows the set name
+                  c.componentSet = comp.containing_frame.name !== comp.name ? comp.containing_frame.name : undefined;
+                }
+                components.push(c);
+              }
+            }
+
+            // Also get component sets
+            spinner.text = 'Fetching component sets from Figma API...';
+            try {
+              const setsData = await figmaApiGet(`/files/${fileKey}/component_sets`);
+              if (setsData.meta && setsData.meta.component_sets) {
+                for (const set of setsData.meta.component_sets) {
+                  // Mark components that belong to this set
+                  for (const comp of components) {
+                    if (comp.id && set.node_id && comp.componentSet === undefined) {
+                      // Check if node is child of this set by matching containing_frame
+                    }
+                  }
+                }
+              }
+            } catch (e) { /* component_sets endpoint may not exist for all plans */ }
+
+            // Get file name
+            spinner.text = 'Fetching file info...';
+            let fileName = fileKey;
+            try {
+              const fileInfo = await figmaApiGet(`/files/${fileKey}?depth=1`);
+              if (fileInfo.name) fileName = fileInfo.name;
+            } catch (e) { /* use fileKey as fallback */ }
+
+            const result = {
+              fileName,
+              fileKey,
+              pageCount: 0,
+              componentCount: components.length,
+              components
+            };
+
+            const { indexData, libFile } = saveIndexAndPrint(result, options);
+            spinner.succeed(`Indexed ${components.length} components from "${fileName}" via API`);
+            printIndexSummary(indexData, libFile, options);
+
+          } catch (e) {
+            spinner.fail(`Figma API error: ${e.message}`);
+            process.exit(1);
+          }
+
+        // ---- Plugin mode with --page filter ----
+        } else if (options.page) {
+          const pageName = options.page;
+          spinner.text = `Scanning page "${pageName}" for components...`;
+          const safePageName = pageName.replace(/'/g, "\\'");
+          const code = `(function() {
+            try {
+              var components = [];
+              var targetPage = null;
+              var pages = figma.root.children;
+              for (var p = 0; p < pages.length; p++) {
+                if (pages[p].name === '${safePageName}' || pages[p].name.toLowerCase().indexOf('${safePageName.toLowerCase()}') !== -1) {
+                  targetPage = pages[p];
+                  break;
+                }
+              }
+              if (!targetPage) {
+                return { error: 'Page "${safePageName}" not found. Available pages: ' + pages.map(function(p) { return p.name; }).join(', ') };
+              }
               function scanNode(node, pageName) {
                 if (node.type === 'COMPONENT') {
                   var comp = {
@@ -10823,66 +11031,79 @@ Examples:
                   }
                 }
               }
-              scanNode(page, page.name);
+              scanNode(targetPage, targetPage.name);
+              return {
+                fileName: figma.root.name,
+                fileKey: figma.fileKey || '',
+                pageCount: 1,
+                componentCount: components.length,
+                components: components
+              };
+            } catch(e) {
+              return { error: e.message || 'Failed to scan page for components.' };
             }
-            return {
-              fileName: figma.root.name,
-              fileKey: figma.fileKey || '',
-              pageCount: pages.length,
-              componentCount: components.length,
-              components: components
-            };
-          } catch(e) {
-            return { error: e.message || 'Failed to scan file for components.' };
+          })()`;
+          const result = await daemonExec('eval', { code });
+          if (result.error) {
+            spinner.fail(result.error);
+            process.exit(1);
           }
-        })()`;
-        const result = await daemonExec('eval', { code });
-        if (result.error) {
-          spinner.fail(result.error);
-          process.exit(1);
-        }
-        // Save to ~/.figma-local/libraries/
-        const libDir = join(homedir(), '.figma-local', 'libraries');
-        mkdirSync(libDir, { recursive: true });
-        const safeName = result.fileName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
-        const libFile = join(libDir, `${safeName}.json`);
-        const indexData = {
-          fileName: result.fileName,
-          fileKey: result.fileKey,
-          indexedAt: new Date().toISOString(),
-          pageCount: result.pageCount,
-          componentCount: result.componentCount,
-          components: result.components
-        };
-        writeFileSync(libFile, JSON.stringify(indexData, null, 2));
-        spinner.succeed(`Indexed ${result.componentCount} components from "${result.fileName}" (${result.pageCount} pages)`);
-        console.log(`  ${chalk.gray('Saved to:')} ${libFile}`);
-        if (options.json) {
-          console.log(JSON.stringify(indexData, null, 2));
+          const { indexData, libFile } = saveIndexAndPrint(result, { page: pageName });
+          spinner.succeed(`Indexed ${result.componentCount} components from page "${pageName}" (${indexData.componentCount} total in library)`);
+          printIndexSummary(indexData, libFile, options);
+
+        // ---- Plugin mode full scan ----
         } else {
-          // Show summary by component set
-          const sets = {};
-          const standalone = [];
-          for (const c of result.components) {
-            if (c.componentSet) {
-              if (!sets[c.componentSet]) sets[c.componentSet] = [];
-              sets[c.componentSet].push(c);
-            } else {
-              standalone.push(c);
+          spinner.text = 'Scanning all pages for components...';
+          const code = `(function() {
+            try {
+              var components = [];
+              var pages = figma.root.children;
+              for (var p = 0; p < pages.length; p++) {
+                var page = pages[p];
+                function scanNode(node, pageName) {
+                  if (node.type === 'COMPONENT') {
+                    var comp = {
+                      name: node.name,
+                      key: node.key,
+                      id: node.id,
+                      page: pageName,
+                      description: node.description || '',
+                      w: Math.round(node.width),
+                      h: Math.round(node.height)
+                    };
+                    if (node.parent && node.parent.type === 'COMPONENT_SET') {
+                      comp.componentSet = node.parent.name;
+                    }
+                    components.push(comp);
+                  }
+                  if ('children' in node) {
+                    for (var i = 0; i < node.children.length; i++) {
+                      scanNode(node.children[i], pageName);
+                    }
+                  }
+                }
+                scanNode(page, page.name);
+              }
+              return {
+                fileName: figma.root.name,
+                fileKey: figma.fileKey || '',
+                pageCount: pages.length,
+                componentCount: components.length,
+                components: components
+              };
+            } catch(e) {
+              return { error: e.message || 'Failed to scan file for components.' };
             }
+          })()`;
+          const result = await daemonExec('eval', { code });
+          if (result.error) {
+            spinner.fail(result.error);
+            process.exit(1);
           }
-          if (Object.keys(sets).length > 0) {
-            console.log(chalk.cyan('\n  Component Sets:'));
-            for (const [setName, variants] of Object.entries(sets)) {
-              console.log(`    ${chalk.white(setName)} ${chalk.gray(`(${variants.length} variant${variants.length !== 1 ? 's' : ''})`)}`);
-            }
-          }
-          if (standalone.length > 0) {
-            console.log(chalk.cyan('\n  Standalone Components:'));
-            for (const c of standalone) {
-              console.log(`    ${chalk.white(c.name)} ${chalk.gray(`[${c.page}]`)}`);
-            }
-          }
+          const { indexData, libFile } = saveIndexAndPrint(result, {});
+          spinner.succeed(`Indexed ${result.componentCount} components from "${result.fileName}" (${result.pageCount} pages)`);
+          printIndexSummary(indexData, libFile, options);
         }
       } else if (action === 'search') {
         const nameFilter = options.name ? options.name.toLowerCase() : '';

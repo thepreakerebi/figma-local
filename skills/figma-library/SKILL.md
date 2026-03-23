@@ -11,41 +11,58 @@ allowed-tools:
 
 # Figma Library
 
-Access team library components and variables from other Figma files. Index libraries, search components by name, import by key, and browse design tokens.
+Access team library components and variables from other Figma files. Index libraries via REST API or plugin, search components by name, import by key, and browse design tokens.
 
 ## Prerequisites
 
 - The `fig` CLI must be connected: `fig daemon status`. If not: `fig connect --safe`.
 - The Figma plugin must have `teamlibrary` permission in its manifest. If library commands fail with a permission error, re-import the plugin in Figma (Plugins → Development → Import from manifest).
-- Libraries must be enabled in the current Figma file (check Assets panel → team library icon).
 
 ## IMPORTANT: How to access library components
 
-Figma's plugin API does **not** allow browsing library components directly. To work with library components, you must **index** them first:
+Figma's plugin API does **not** allow browsing library components directly. To work with library components, you must **index** them first. There are three ways to index:
 
-1. Open the **library file** in Figma (the file that contains the components)
-2. Run `fig library index` — this scans all pages and saves every component with its key
-3. Switch to your **working file**
-4. Run `fig library search --name "button"` — finds components from indexed libraries
-5. Run `fig library import --key "<key>"` — imports the component
+### Option A: REST API (recommended for large files)
 
-## Usage
+No plugin needed. Works on any file size without hanging Figma.
 
-### Index a library (run in the library file)
+**First time — provide token and file URL:**
+```bash
+fig library index --api --token "figd_xxxxx" --file "https://www.figma.com/design/ABC123/MyFile"
+```
 
-Open the library/design system file in Figma, then:
+The token is saved for future use. Get one from: Figma → Settings → Personal Access Tokens.
+
+**After first time — just provide the file URL:**
+```bash
+fig library index --api --file "https://www.figma.com/design/ABC123/MyFile"
+```
+
+### Option B: Page-by-page (for large files via plugin)
+
+Open the library file in Figma, then scan one page at a time:
+
+```bash
+fig library index --page "Buttons"
+fig library index --page "Inputs"
+fig library index --page "Cards"
+```
+
+Each page's components are merged into the same index file. This avoids hanging on large files.
+
+### Option C: Full scan (small files only)
+
+Open the library file in Figma, then:
 
 ```bash
 fig library index
 ```
 
-This scans ALL pages in the file and saves every component (name, key, description, page, size, component set) to `~/.figma-local/libraries/<filename>.json`.
+**Warning:** This scans ALL pages at once. Only use on small files — large design systems will cause Figma to hang.
 
-Re-run this command after the library is updated to refresh the index.
+## After indexing: Search and Import
 
 ### Search indexed libraries
-
-Search across all indexed libraries by component name:
 
 ```bash
 fig library search --name "button"
@@ -54,119 +71,85 @@ fig library search --name "card"
 fig library search --name "checkbox"
 ```
 
-Returns: component name, key (for importing), component set, page, size, and library name.
-
-Use `--json` for structured output:
-
-```bash
-fig library search --name "button" --json
-```
+Returns: component name, key (for importing), component set, page, and library name.
 
 ### List indexed libraries
-
-See what libraries have been indexed:
 
 ```bash
 fig library list
 ```
 
-Returns: library name, component count, page count, and when it was indexed.
-
-### Import a component by key
-
-Import a library component onto the canvas by its key:
+### Import by key
 
 ```bash
-fig library import --key "abc123def456..."
+fig library import --key "<key-from-search>"
+fig library import --key "<key>" --name "PrimaryButton"
 ```
 
-Import and rename:
+The component is placed at viewport center and selected.
+
+### Inspect the imported component
 
 ```bash
-fig library import --key "abc123def456..." --name "PrimaryButton"
+fig inspect --deep
 ```
 
-The imported component instance is placed at the viewport center and selected.
+## Variables (no indexing needed)
 
-### List library variable collections
-
-See what variable collections are available from linked libraries:
+Library variables are available directly via the plugin API:
 
 ```bash
-fig library collections
+fig library collections                    # List variable collections
+fig library variables                      # List all variables
+fig library variables --name "color"       # Search by name
 ```
 
-### List library variables
+## Components on current page
 
-Browse all variables across all linked library collections:
-
-```bash
-fig library variables
-fig library variables --name "color"
-fig library variables --name "spacing"
-```
-
-### List components on current page
-
-Find library components that are already used on the current page:
+Find library components already dragged onto the current page:
 
 ```bash
 fig library components
 fig library components --name "button"
 ```
 
-### JSON output
+## Full workflow
 
-All commands support `--json` for structured output.
-
-## Workflow: Building UI with library components
-
-1. **Index** the library (one-time, in the library file):
+1. **Index** the library (pick one method):
    ```bash
-   fig library index
+   # Best for large files:
+   fig library index --api --token "figd_..." --file "https://..."
+   # Or page by page:
+   fig library index --page "Buttons"
    ```
 
-2. **Switch** to your working file in Figma.
-
-3. **Search** for the components you need:
+2. **Search** for components:
    ```bash
-   fig library search --name "button"
-   fig library search --name "input"
+   fig library search --name "button" --json
    ```
 
-4. **Import** each component by key:
+3. **Import** into your working file:
    ```bash
-   fig library import --key "<key-from-search>"
+   fig library import --key "<key>"
    ```
 
-5. **Inspect** the imported component to get its full specs:
+4. **Inspect** for full specs:
    ```bash
    fig inspect --deep
    ```
 
-6. **Get variables** for design tokens:
+5. **Get variables** for tokens:
    ```bash
    fig library variables --name "primary" --json
    ```
 
-7. **Replicate** in code using the exact specs and token values.
-
-## Workflow: Extracting a full design system
-
-1. Open the design system file → `fig library index`
-2. Get all components: `fig library search --name "" --json`
-3. Get all variables: `fig library variables --json`
-4. Import key components one by one and document them:
-   ```bash
-   fig library import --key "<key>"
-   fig document --json
-   ```
+6. **Replicate** in code.
 
 ## Tips
 
-- **Index once, search many times** — the index is saved locally and persists across sessions.
-- Re-index when the library is updated: open the library file → `fig library index`.
-- `fig library components` only finds components already on the current page. Use `search` for the full library.
-- After importing a component, use `fig inspect --deep` to get full specs including variable bindings.
+- **REST API is fastest** for large design systems — no file opening needed.
+- Token is saved after first use in `~/.figma-local/figma-token`.
+- Page-by-page indexing merges results — run multiple times to build up the index.
+- Re-index when the library is updated to get new components.
+- `fig library search --name "" --json` returns ALL indexed components.
 - Component keys are stable across file versions — save them for repeated imports.
-- Use `fig library search --name "button" --json | jq '.[].key'` to extract just the keys.
