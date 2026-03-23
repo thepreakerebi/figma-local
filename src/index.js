@@ -8537,6 +8537,7 @@ program
   .option('--tokens', 'Show only the design tokens (colors, spacing, etc.) used in the frame')
   .option('--selection', 'Read whatever is currently selected in Figma')
   .option('--link <url>', 'Read a specific node from a Figma selection link (e.g. copied via "Copy link to selection")')
+  .option('--page', 'Read the entire current page — all frames with full structure, tokens, and specs')
   .option('--stage <n>', 'Run a specific stage: 1 (list frames), 2 (structure), 3 (tokens)')
   .addHelpText('after', `
 Examples:
@@ -8545,6 +8546,7 @@ Examples:
   fig read "Login Screen" --tokens  Show only the design tokens used by Login Screen
   fig read --selection              Read the node you currently have selected in Figma
   fig read --link "https://..."     Read a node from a Figma selection link
+  fig read --page                   Read the entire page with all frames, structure, and tokens
   fig read --json                   Output raw JSON (useful for piping to other tools)
 `)
   .action(async (frameName, options) => {
@@ -8617,6 +8619,136 @@ Examples:
         }
         spinner.succeed(`Reading node: ${result.node.name} (${nodeId})`);
         console.log(options.json ? JSON.stringify(result, null, 2) : formatSelectionResult(result));
+        return;
+      }
+
+      // --page: read the entire current page with all frames
+      if (options.page) {
+        spinner.text = 'Reading entire page...';
+        const pageCode = `(function() {
+          const page = figma.currentPage;
+          function walk(n, depth) {
+            if (depth > 20) return { type: n.type, name: n.name };
+            var obj = { type: n.type, name: n.name, id: n.id };
+            if (n.width) obj.w = Math.round(n.width);
+            if (n.height) obj.h = Math.round(n.height);
+            if (n.x !== undefined) obj.x = Math.round(n.x);
+            if (n.y !== undefined) obj.y = Math.round(n.y);
+            if (n.type === 'TEXT') obj.text = n.characters;
+            if (n.fills && n.fills.length) {
+              obj.fills = n.fills.map(function(f) {
+                if (f.type === 'SOLID') return { type: 'SOLID', r: Math.round(f.color.r*255), g: Math.round(f.color.g*255), b: Math.round(f.color.b*255), a: f.opacity !== undefined ? f.opacity : 1 };
+                return { type: f.type };
+              });
+            }
+            if (n.strokes && n.strokes.length) {
+              obj.strokes = n.strokes.map(function(s) {
+                if (s.type === 'SOLID') return { type: 'SOLID', r: Math.round(s.color.r*255), g: Math.round(s.color.g*255), b: Math.round(s.color.b*255) };
+                return { type: s.type };
+              });
+              if (n.strokeWeight) obj.strokeWeight = n.strokeWeight;
+            }
+            if (n.cornerRadius) obj.radius = n.cornerRadius;
+            if (n.opacity !== undefined && n.opacity < 1) obj.opacity = n.opacity;
+            if (n.layoutMode) {
+              obj.layout = { mode: n.layoutMode };
+              if (n.itemSpacing) obj.layout.gap = n.itemSpacing;
+              if (n.paddingTop || n.paddingRight || n.paddingBottom || n.paddingLeft) {
+                obj.layout.padding = { top: n.paddingTop || 0, right: n.paddingRight || 0, bottom: n.paddingBottom || 0, left: n.paddingLeft || 0 };
+              }
+              if (n.primaryAxisAlignItems) obj.layout.mainAlign = n.primaryAxisAlignItems;
+              if (n.counterAxisAlignItems) obj.layout.crossAlign = n.counterAxisAlignItems;
+            }
+            if (n.type === 'TEXT') {
+              obj.typography = {};
+              try { obj.typography.family = n.fontName.family; } catch(e) {}
+              try { obj.typography.style = n.fontName.style; } catch(e) {}
+              try { obj.typography.size = n.fontSize; } catch(e) {}
+              try { obj.typography.weight = n.fontWeight; } catch(e) {}
+              try {
+                if (n.lineHeight && n.lineHeight.value) obj.typography.lineHeight = n.lineHeight.unit === 'PERCENT' ? n.lineHeight.value + '%' : n.lineHeight.value;
+              } catch(e) {}
+              try { if (n.letterSpacing && n.letterSpacing.value) obj.typography.letterSpacing = n.letterSpacing.value; } catch(e) {}
+            }
+            if (n.effects && n.effects.length) {
+              obj.effects = n.effects.map(function(e) {
+                var eff = { type: e.type };
+                if (e.radius) eff.radius = e.radius;
+                if (e.offset) eff.offset = { x: e.offset.x, y: e.offset.y };
+                if (e.color) eff.color = { r: Math.round(e.color.r*255), g: Math.round(e.color.g*255), b: Math.round(e.color.b*255), a: e.color.a };
+                return eff;
+              });
+            }
+            // Variable bindings
+            try {
+              var vars = {};
+              var bindings = n.boundVariables;
+              if (bindings) {
+                Object.keys(bindings).forEach(function(prop) {
+                  try {
+                    var binding = bindings[prop];
+                    if (Array.isArray(binding)) binding = binding[0];
+                    if (binding && binding.id) {
+                      var v = figma.variables.getVariableById(binding.id);
+                      if (v) {
+                        var info = { name: v.name };
+                        try {
+                          var collection = figma.variables.getVariableCollectionById(v.variableCollectionId);
+                          if (collection && collection.modes && collection.modes.length > 0) {
+                            info.values = {};
+                            collection.modes.forEach(function(mode) {
+                              try {
+                                var mVal = v.valuesByMode[mode.modeId];
+                                if (mVal && mVal.type === 'VARIABLE_ALIAS') {
+                                  try {
+                                    var aliased = figma.variables.getVariableById(mVal.id);
+                                    info.values[mode.name] = aliased ? aliased.name : 'alias';
+                                  } catch(e3) { info.values[mode.name] = 'alias'; }
+                                } else {
+                                  info.values[mode.name] = mVal;
+                                }
+                              } catch(e4) {}
+                            });
+                          }
+                        } catch(e5) {}
+                        vars[prop] = info;
+                      }
+                    }
+                  } catch(e) {}
+                });
+              }
+              if (Object.keys(vars).length > 0) obj.variables = vars;
+            } catch(e) {}
+            // Component info
+            if (n.type === 'COMPONENT') obj.isComponent = true;
+            if (n.type === 'INSTANCE') {
+              obj.isInstance = true;
+              try { obj.componentName = n.mainComponent ? n.mainComponent.name : undefined; } catch(e) {}
+            }
+            if (n.children) obj.children = n.children.map(function(c) { return walk(c, depth + 1); });
+            return obj;
+          }
+          var frames = [];
+          for (var i = 0; i < page.children.length; i++) {
+            frames.push(walk(page.children[i], 0));
+          }
+          return { page: page.name, frameCount: frames.length, frames: frames };
+        })()`;
+        const result = await daemonExec('eval', { code: pageCode });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        spinner.succeed(`Read page "${result.page}" — ${result.frameCount} top-level frames`);
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          // Pretty print each frame
+          for (const frame of result.frames) {
+            console.log(chalk.cyan(`\n━━━ ${frame.name} [${frame.type}] ${frame.w || ''}x${frame.h || ''} ━━━`));
+            console.log(formatSelectionResult({ node: frame }));
+          }
+        }
         return;
       }
 

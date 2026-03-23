@@ -1,6 +1,6 @@
 {
   "name": "figma-local",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Control Figma Desktop with Claude Code. Smart read, write, and AI-prompt export. No API key required.",
   "author": "elvke",
   "license": "MIT",
