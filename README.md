@@ -395,7 +395,7 @@ fig-start --safe --here     # launch from your project dir; Claude sees both you
 
 ## Claude Code Plugin (Skills)
 
-figma-local ships as a Claude Code plugin with 8 skills that teach coding agents how to use it automatically:
+figma-local ships as a Claude Code plugin with 9 skills that teach coding agents how to use it automatically:
 
 | Skill | Triggers on |
 |-------|------------|
@@ -407,6 +407,7 @@ figma-local ships as a Claude Code plugin with 8 skills that teach coding agents
 | **figma-document** | "document this component", "full spec sheet", "deep breakdown" |
 | **figma-screenshot** | "take a screenshot", "export as PNG/SVG", "capture this" |
 | **figma-compare** | "compare", "does this match", "visual diff", "check against design" |
+| **figma-library** | "library components", "import from library", "team library variables" |
 
 ### Install the skills
 
