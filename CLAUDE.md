@@ -24,6 +24,12 @@ Control Figma Desktop with Claude Code. Direct connection — no API key, no MCP
 | "create dashboard" | `fig blocks create dashboard-01` |
 | "verify / check what was created" | `fig verify` |
 | "compare with prototype URL" | `fig verify --compare "https://..."` |
+| "take a screenshot" | `fig screenshot` (selection) |
+| "screenshot from link" | `fig screenshot --link "https://..."` |
+| "screenshot this node" | `fig screenshot --node "123:456"` |
+| "compare selection vs node" | `fig compare --a selection --b "123:456"` |
+| "compare two screenshots" | `fig compare --a design.png --b coded.png` |
+| "compare two Figma links" | `fig compare --a-link "https://..." --b-link "https://..."` |
 | "export as PNG/SVG" | `fig export png` |
 | "lint / accessibility check" | `fig lint` |
 | "list variables" | `fig var list` |

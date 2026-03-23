@@ -5205,18 +5205,30 @@ const exp = program
 
 exp
   .command('screenshot')
-  .description('Take a screenshot of selected node or current page')
+  .description('Take a screenshot of selected node, specific node, or from a Figma link')
   .option('-o, --output <file>', 'Output file', 'screenshot.png')
   .option('-s, --scale <number>', 'Export scale (1-4)', '2')
   .option('-f, --format <format>', 'Format: png, jpg, svg, pdf', 'png')
+  .option('--node <id>', 'Screenshot a specific node by ID')
+  .option('--link <url>', 'Screenshot a node from a Figma selection link')
   .action((options) => {
     checkConnection();
     const format = options.format.toUpperCase();
     const scale = parseFloat(options.scale);
+    let nodeResolver;
+    if (options.link) {
+      const nodeId = parseNodeIdFromLink(options.link);
+      if (!nodeId) { console.error(chalk.red('✗'), 'Could not parse node ID from link'); process.exit(1); }
+      nodeResolver = `node = await figma.getNodeByIdAsync('${nodeId}');`;
+    } else if (options.node) {
+      nodeResolver = `node = await figma.getNodeByIdAsync('${options.node}');`;
+    } else {
+      nodeResolver = `const sel = figma.currentPage.selection; node = sel.length > 0 ? sel[0] : figma.currentPage;`;
+    }
     const code = `(async () => {
-const sel = figma.currentPage.selection;
-const node = sel.length > 0 ? sel[0] : figma.currentPage;
-if (!node) return { error: 'No page or selection' };
+let node;
+${nodeResolver}
+if (!node) return { error: 'No node found' };
 if (!('exportAsync' in node)) return { error: 'Node cannot be exported' };
 const bytes = await node.exportAsync({ format: '${format}', constraint: { type: 'SCALE', value: ${scale} } });
 return {
@@ -5333,14 +5345,25 @@ program
   .option('--save [path]', 'Save as PNG file (default: /tmp/figma-verify-{id}.png)')
   .option('--compare <url>', 'Compare against a prototype/preview URL and generate correction prompts')
   .option('--compare-save <path>', 'Save prototype screenshot to this path when using --compare')
+  .option('--link <url>', 'Verify a node from a Figma selection link')
+  .option('--node <id>', 'Verify a specific node by ID')
   .action(async (nodeId, options) => {
     checkConnection();
     const scale = parseFloat(options.scale);
     const maxDim = parseInt(options.max);
 
+    // Resolve node: --link > --node > positional nodeId > selection
+    let resolvedNodeId = nodeId;
+    if (options.link) {
+      resolvedNodeId = parseNodeIdFromLink(options.link);
+      if (!resolvedNodeId) { console.error(chalk.red('✗'), 'Could not parse node ID from link'); process.exit(1); }
+    } else if (options.node) {
+      resolvedNodeId = options.node;
+    }
+
     const code = `(async () => {
       let node;
-      ${nodeId ? `node = await figma.getNodeByIdAsync('${nodeId}');` : `
+      ${resolvedNodeId ? `node = await figma.getNodeByIdAsync('${resolvedNodeId}');` : `
       const sel = figma.currentPage.selection;
       node = sel.length > 0 ? sel[0] : null;
       `}
@@ -5439,6 +5462,137 @@ program
         base64: result.base64
       }));
     }
+  });
+
+// ============ COMPARE (Visual Comparison) ============
+
+function exportNodeScreenshot(nodeResolver, scale, maxDim) {
+  const code = `(async () => {
+    let node;
+    ${nodeResolver}
+    if (!node) return { error: 'No node found' };
+    if (!('exportAsync' in node)) return { error: 'Node cannot be exported' };
+    const nodeWidth = node.width || 100;
+    const nodeHeight = node.height || 100;
+    let finalScale = ${scale};
+    const maxNodeDim = Math.max(nodeWidth, nodeHeight);
+    if (maxNodeDim * finalScale > ${maxDim}) finalScale = ${maxDim} / maxNodeDim;
+    if (maxNodeDim * finalScale > 7500) finalScale = 7500 / maxNodeDim;
+    const bytes = await node.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: finalScale } });
+    return {
+      name: node.name,
+      id: node.id,
+      type: node.type,
+      width: Math.round(nodeWidth * finalScale),
+      height: Math.round(nodeHeight * finalScale),
+      originalWidth: Math.round(nodeWidth),
+      originalHeight: Math.round(nodeHeight),
+      bytes: Array.from(bytes)
+    };
+  })()`;
+  return figmaEvalSync(code);
+}
+
+program
+  .command('compare')
+  .description('Compare two things visually: screenshots, Figma nodes, or a mix. Outputs both images for AI analysis.')
+  .option('--a <source>', 'First source: file path, node ID, or "selection"', 'selection')
+  .option('--b <source>', 'Second source: file path, node ID, or Figma link')
+  .option('--a-link <url>', 'First source from a Figma selection link')
+  .option('--b-link <url>', 'Second source from a Figma selection link')
+  .option('-s, --scale <number>', 'Export scale for Figma nodes', '1')
+  .option('--max <pixels>', 'Max dimension for exports', '2000')
+  .option('--save-dir <dir>', 'Directory to save comparison images', '/tmp')
+  .addHelpText('after', `
+Examples:
+  fig compare --a selection --b "123:456"          Compare selection vs a node
+  fig compare --a design.png --b "123:456"         Compare a screenshot file vs a Figma node
+  fig compare --a design.png --b coded.png         Compare two screenshot files
+  fig compare --a-link "https://..." --b-link "https://..."   Compare two Figma links
+  fig compare --a selection --b-link "https://..."  Compare selection vs a Figma link
+  fig compare --a "123:456" --b "789:012"          Compare two nodes by ID
+`)
+  .action((options) => {
+    checkConnection();
+    const scale = parseFloat(options.scale);
+    const maxDim = parseInt(options.max);
+    const saveDir = options.saveDir;
+    const timestamp = Date.now();
+
+    function resolveSource(source, linkOpt, label) {
+      // If it's a --link option
+      if (linkOpt) {
+        const nodeId = parseNodeIdFromLink(linkOpt);
+        if (!nodeId) { console.error(chalk.red('✗'), `Could not parse node ID from ${label} link`); process.exit(1); }
+        const result = exportNodeScreenshot(`node = await figma.getNodeByIdAsync('${nodeId}');`, scale, maxDim);
+        if (result.error) { console.error(chalk.red('✗'), `${label}: ${result.error}`); process.exit(1); }
+        const filePath = `${saveDir}/figma-compare-${label}-${timestamp}.png`;
+        writeFileSync(filePath, Buffer.from(result.bytes));
+        return { type: 'figma-node', name: result.name, id: result.id, nodeType: result.type, width: result.width, height: result.height, originalWidth: result.originalWidth, originalHeight: result.originalHeight, path: filePath };
+      }
+
+      // File path (existing screenshot)
+      if (source && existsSync(source)) {
+        return { type: 'file', name: source.split('/').pop(), path: source };
+      }
+
+      // "selection"
+      if (source === 'selection') {
+        const result = exportNodeScreenshot(`const sel = figma.currentPage.selection; node = sel.length > 0 ? sel[0] : null;`, scale, maxDim);
+        if (result.error) { console.error(chalk.red('✗'), `${label}: ${result.error}`); process.exit(1); }
+        const filePath = `${saveDir}/figma-compare-${label}-${timestamp}.png`;
+        writeFileSync(filePath, Buffer.from(result.bytes));
+        return { type: 'figma-node', name: result.name, id: result.id, nodeType: result.type, width: result.width, height: result.height, originalWidth: result.originalWidth, originalHeight: result.originalHeight, path: filePath };
+      }
+
+      // Node ID (contains ":")
+      if (source && source.includes(':')) {
+        const result = exportNodeScreenshot(`node = await figma.getNodeByIdAsync('${source}');`, scale, maxDim);
+        if (result.error) { console.error(chalk.red('✗'), `${label}: ${result.error}`); process.exit(1); }
+        const filePath = `${saveDir}/figma-compare-${label}-${timestamp}.png`;
+        writeFileSync(filePath, Buffer.from(result.bytes));
+        return { type: 'figma-node', name: result.name, id: result.id, nodeType: result.type, width: result.width, height: result.height, originalWidth: result.originalWidth, originalHeight: result.originalHeight, path: filePath };
+      }
+
+      console.error(chalk.red('✗'), `${label}: "${source}" is not a valid file path, node ID, or "selection"`);
+      process.exit(1);
+    }
+
+    const sourceA = resolveSource(options.a, options.aLink, 'a');
+    const sourceB = resolveSource(options.b, options.bLink, 'b');
+
+    console.log(chalk.bold('\n## Visual Comparison\n'));
+    console.log(chalk.cyan('Source A:'), sourceA.name, sourceA.type === 'figma-node' ? `(${sourceA.nodeType} ${sourceA.id}, ${sourceA.originalWidth}x${sourceA.originalHeight})` : '(file)');
+    console.log(chalk.cyan('Source B:'), sourceB.name, sourceB.type === 'figma-node' ? `(${sourceB.nodeType} ${sourceB.id}, ${sourceB.originalWidth}x${sourceB.originalHeight})` : '(file)');
+    console.log('');
+    console.log(chalk.green('Image A:'), sourceA.path);
+    console.log(chalk.green('Image B:'), sourceB.path);
+    console.log('');
+
+    // Output structured data for AI agents
+    console.log(JSON.stringify({
+      mode: 'visual-comparison',
+      sourceA: { ...sourceA, bytes: undefined },
+      sourceB: { ...sourceB, bytes: undefined },
+      instructions: [
+        `1. Open and examine Image A: ${sourceA.path}`,
+        `2. Open and examine Image B: ${sourceB.path}`,
+        '3. Compare them visually for differences in:',
+        '   - Layout and spacing (padding, margins, gaps)',
+        '   - Colors (backgrounds, text, borders)',
+        '   - Typography (font size, weight, line-height)',
+        '   - Border radius and shadows',
+        '   - Missing or extra elements',
+        '   - Alignment and positioning',
+        '4. Output a structured gap report with specific differences',
+        '5. For each difference, provide the exact values from both sources',
+      ],
+      gapReportTemplate: {
+        matches: '(list elements that match between A and B)',
+        differences: '(table: element | property | value_in_A | value_in_B | severity)',
+        summary: '(brief overall assessment: how closely do they match)',
+      }
+    }, null, 2));
   });
 
 // ============ EVAL ============

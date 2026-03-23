@@ -289,12 +289,33 @@ fig prompt "Login" \
 
 Generates ~45 tokens of structured text instead of attaching a Figma frame (300–500+ hidden tokens). **91–97% smaller input, more consistent AI output.**
 
+### Screenshots
+
+```bash
+fig screenshot                           # Screenshot current selection
+fig screenshot --node "123:456"          # Screenshot a specific node
+fig screenshot --link "https://..."      # Screenshot from a Figma link
+fig screenshot -o design.png -s 2        # Save to file at 2x scale
+fig screenshot -f svg -o icon.svg        # Export as SVG
+```
+
 ### Verify & compare
 
 ```bash
-fig verify                         # Screenshot of selection for AI review
-fig verify --compare "https://..."  # Diff prototype vs Figma design → correction prompts
+fig verify                                          # Screenshot of selection for AI review
+fig verify --link "https://..."                     # Verify from a Figma link
+fig verify --node "123:456"                         # Verify a specific node
+fig verify --compare "https://..."                  # Diff prototype vs Figma design → correction prompts
+
+# Visual comparison between any two sources
+fig compare --a selection --b "123:456"              # Compare selection vs a node
+fig compare --a design.png --b "123:456"             # Compare a screenshot file vs a Figma node
+fig compare --a design.png --b coded.png             # Compare two screenshot files
+fig compare --a-link "https://..." --b-link "https://..."  # Compare two Figma links
+fig compare --a "123:456" --b "789:012"              # Compare two nodes by ID
 ```
+
+Sources for `--a` and `--b` can be: `selection`, a node ID (`123:456`), or a file path (`screenshot.png`). Use `--a-link` / `--b-link` for Figma selection URLs.
 
 ### Export
 
