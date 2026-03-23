@@ -1,7 +1,7 @@
 ---
 name: figma-library
 description: |
-  Use this skill when the user wants to access, browse, import, or use components and variables from a Figma team library or external Figma file. Triggers on: "library components", "import component", "library variables", "team library", "use components from another file", "get the button from the library", "what components are available", "design system components", "import from library", "library collections". Also use when building UI and the user references a design system or component library in another Figma file.
+  Use this skill when the user wants to access, browse, import, or use components and variables from a Figma team library or external Figma file. Triggers on: "library components", "import component", "library variables", "team library", "use components from another file", "get the button from the library", "what components are available", "design system components", "import from library", "library collections", "index the library", "scan components", "search for a component". Also use when building UI and the user references a design system or component library in another Figma file.
 allowed-tools:
   - Bash(fig library *)
   - Bash(fig library)
@@ -11,7 +11,7 @@ allowed-tools:
 
 # Figma Library
 
-Access team library components and variables from other Figma files. Import components by key and browse available design tokens.
+Access team library components and variables from other Figma files. Index libraries, search components by name, import by key, and browse design tokens.
 
 ## Prerequisites
 
@@ -19,53 +19,58 @@ Access team library components and variables from other Figma files. Import comp
 - The Figma plugin must have `teamlibrary` permission in its manifest. If library commands fail with a permission error, re-import the plugin in Figma (Plugins → Development → Import from manifest).
 - Libraries must be enabled in the current Figma file (check Assets panel → team library icon).
 
+## IMPORTANT: How to access library components
+
+Figma's plugin API does **not** allow browsing library components directly. To work with library components, you must **index** them first:
+
+1. Open the **library file** in Figma (the file that contains the components)
+2. Run `fig library index` — this scans all pages and saves every component with its key
+3. Switch to your **working file**
+4. Run `fig library search --name "button"` — finds components from indexed libraries
+5. Run `fig library import --key "<key>"` — imports the component
+
 ## Usage
 
-### List library variable collections
+### Index a library (run in the library file)
 
-See what variable collections are available from linked libraries:
-
-```bash
-fig library collections
-```
-
-Returns: collection name, library name, and collection key for each.
-
-### List library variables
-
-Browse all variables across all linked library collections:
+Open the library/design system file in Figma, then:
 
 ```bash
-fig library variables
+fig library index
 ```
 
-Filter by name:
+This scans ALL pages in the file and saves every component (name, key, description, page, size, component set) to `~/.figma-local/libraries/<filename>.json`.
+
+Re-run this command after the library is updated to refresh the index.
+
+### Search indexed libraries
+
+Search across all indexed libraries by component name:
 
 ```bash
-fig library variables --name "color"
-fig library variables --name "spacing"
-fig library variables --name "radius"
+fig library search --name "button"
+fig library search --name "input"
+fig library search --name "card"
+fig library search --name "checkbox"
 ```
 
-Returns: variable name, type (COLOR, FLOAT, STRING), key, collection, and library name.
+Returns: component name, key (for importing), component set, page, size, and library name.
 
-### List library components
-
-Find library components that are already used on the current page:
+Use `--json` for structured output:
 
 ```bash
-fig library components
+fig library search --name "button" --json
 ```
 
-Filter by name:
+### List indexed libraries
+
+See what libraries have been indexed:
 
 ```bash
-fig library components --name "button"
-fig library components --name "input"
-fig library components --name "card"
+fig library list
 ```
 
-Returns: component name, component set, key, description, and whether it's remote (library) or local.
+Returns: library name, component count, page count, and when it was indexed.
 
 ### Import a component by key
 
@@ -83,63 +88,75 @@ fig library import --key "abc123def456..." --name "PrimaryButton"
 
 The imported component instance is placed at the viewport center and selected.
 
-### JSON output
+### List library variable collections
 
-All commands support `--json` for structured output:
+See what variable collections are available from linked libraries:
 
 ```bash
-fig library collections --json
-fig library variables --json
-fig library variables --name "color" --json
-fig library components --json
+fig library collections
 ```
 
-## Workflow: Building with library components
+### List library variables
 
-1. **Discover** what's available:
+Browse all variables across all linked library collections:
+
+```bash
+fig library variables
+fig library variables --name "color"
+fig library variables --name "spacing"
+```
+
+### List components on current page
+
+Find library components that are already used on the current page:
+
+```bash
+fig library components
+fig library components --name "button"
+```
+
+### JSON output
+
+All commands support `--json` for structured output.
+
+## Workflow: Building UI with library components
+
+1. **Index** the library (one-time, in the library file):
    ```bash
-   fig library collections
-   fig library variables --name "color"
-   fig library components --name "button"
+   fig library index
    ```
 
-2. **Import** the components you need:
+2. **Switch** to your working file in Figma.
+
+3. **Search** for the components you need:
    ```bash
-   fig library import --key "<key-from-step-1>"
+   fig library search --name "button"
+   fig library search --name "input"
    ```
 
-3. **Inspect** the imported component to get its specs:
+4. **Import** each component by key:
+   ```bash
+   fig library import --key "<key-from-search>"
+   ```
+
+5. **Inspect** the imported component to get its full specs:
    ```bash
    fig inspect --deep
    ```
 
-4. **Read** variables to get token values:
+6. **Get variables** for design tokens:
    ```bash
    fig library variables --name "primary" --json
    ```
 
-5. **Replicate** in code using the exact specs and token values.
+7. **Replicate** in code using the exact specs and token values.
 
-## Workflow: Extracting a design system
+## Workflow: Extracting a full design system
 
-1. List all variable collections:
-   ```bash
-   fig library collections --json
-   ```
-
-2. Export all variables grouped by type:
-   ```bash
-   fig library variables --name "color" --json > colors.json
-   fig library variables --name "spacing" --json > spacing.json
-   fig library variables --name "radius" --json > radii.json
-   ```
-
-3. Find key components:
-   ```bash
-   fig library components --json
-   ```
-
-4. Import and document each:
+1. Open the design system file → `fig library index`
+2. Get all components: `fig library search --name "" --json`
+3. Get all variables: `fig library variables --json`
+4. Import key components one by one and document them:
    ```bash
    fig library import --key "<key>"
    fig document --json
@@ -147,7 +164,9 @@ fig library components --json
 
 ## Tips
 
-- If `fig library components` returns empty, drag some components from the Assets panel onto the page first — the command scans instances on the current page.
-- Use `fig library variables --json` and pipe to `jq` for filtering: `fig library variables --json | jq '.[] | select(.resolvedType == "COLOR")'`
+- **Index once, search many times** — the index is saved locally and persists across sessions.
+- Re-index when the library is updated: open the library file → `fig library index`.
+- `fig library components` only finds components already on the current page. Use `search` for the full library.
 - After importing a component, use `fig inspect --deep` to get full specs including variable bindings.
 - Component keys are stable across file versions — save them for repeated imports.
+- Use `fig library search --name "button" --json | jq '.[].key'` to extract just the keys.

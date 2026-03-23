@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { execSync, spawn } from 'child_process';
 import { randomBytes } from 'crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, readdirSync } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 import { createInterface } from 'readline';
@@ -10585,8 +10585,11 @@ program
 Actions:
   collections    List all available library variable collections
   variables      List variables from a library collection (use --name to filter)
-  components     List available library components (use --name to filter)
+  components     List available library components on current page (use --name to filter)
+  index          Scan the current open file and save all components to a local index
+  search         Search indexed libraries for components (use --name to filter)
   import         Import a component by key (use --key)
+  list           List all indexed libraries
 
 Examples:
   fig library collections                    List all library variable collections
@@ -10594,6 +10597,9 @@ Examples:
   fig library variables --name "color"       List variables matching "color"
   fig library components                     List available library components
   fig library components --name "button"     Find button components
+  fig library index                          Index all components in the current open file
+  fig library search --name "button"         Search indexed libraries for "button"
+  fig library list                           List all indexed libraries
   fig library import --key "abc123..."       Import a component by its key
   fig library import --key "abc123..." --name "MyButton"  Import and rename
 `)
@@ -10787,8 +10793,183 @@ Examples:
         spinner.succeed(`Imported "${result.componentName}" as ${result.name} (${result.w}x${result.h})`);
         console.log(`  ${chalk.gray('id:')} ${result.id}`);
         console.log(chalk.gray('  Component is now selected on the canvas.'));
+      } else if (action === 'index') {
+        spinner.text = 'Scanning all pages for components...';
+        const code = `(function() {
+          try {
+            var components = [];
+            var pages = figma.root.children;
+            for (var p = 0; p < pages.length; p++) {
+              var page = pages[p];
+              function scanNode(node, pageName) {
+                if (node.type === 'COMPONENT') {
+                  var comp = {
+                    name: node.name,
+                    key: node.key,
+                    id: node.id,
+                    page: pageName,
+                    description: node.description || '',
+                    w: Math.round(node.width),
+                    h: Math.round(node.height)
+                  };
+                  if (node.parent && node.parent.type === 'COMPONENT_SET') {
+                    comp.componentSet = node.parent.name;
+                  }
+                  components.push(comp);
+                }
+                if ('children' in node) {
+                  for (var i = 0; i < node.children.length; i++) {
+                    scanNode(node.children[i], pageName);
+                  }
+                }
+              }
+              scanNode(page, page.name);
+            }
+            return {
+              fileName: figma.root.name,
+              fileKey: figma.fileKey || '',
+              pageCount: pages.length,
+              componentCount: components.length,
+              components: components
+            };
+          } catch(e) {
+            return { error: e.message || 'Failed to scan file for components.' };
+          }
+        })()`;
+        const result = await daemonExec('eval', { code });
+        if (result.error) {
+          spinner.fail(result.error);
+          process.exit(1);
+        }
+        // Save to ~/.figma-local/libraries/
+        const libDir = join(homedir(), '.figma-local', 'libraries');
+        mkdirSync(libDir, { recursive: true });
+        const safeName = result.fileName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+        const libFile = join(libDir, `${safeName}.json`);
+        const indexData = {
+          fileName: result.fileName,
+          fileKey: result.fileKey,
+          indexedAt: new Date().toISOString(),
+          pageCount: result.pageCount,
+          componentCount: result.componentCount,
+          components: result.components
+        };
+        writeFileSync(libFile, JSON.stringify(indexData, null, 2));
+        spinner.succeed(`Indexed ${result.componentCount} components from "${result.fileName}" (${result.pageCount} pages)`);
+        console.log(`  ${chalk.gray('Saved to:')} ${libFile}`);
+        if (options.json) {
+          console.log(JSON.stringify(indexData, null, 2));
+        } else {
+          // Show summary by component set
+          const sets = {};
+          const standalone = [];
+          for (const c of result.components) {
+            if (c.componentSet) {
+              if (!sets[c.componentSet]) sets[c.componentSet] = [];
+              sets[c.componentSet].push(c);
+            } else {
+              standalone.push(c);
+            }
+          }
+          if (Object.keys(sets).length > 0) {
+            console.log(chalk.cyan('\n  Component Sets:'));
+            for (const [setName, variants] of Object.entries(sets)) {
+              console.log(`    ${chalk.white(setName)} ${chalk.gray(`(${variants.length} variant${variants.length !== 1 ? 's' : ''})`)}`);
+            }
+          }
+          if (standalone.length > 0) {
+            console.log(chalk.cyan('\n  Standalone Components:'));
+            for (const c of standalone) {
+              console.log(`    ${chalk.white(c.name)} ${chalk.gray(`[${c.page}]`)}`);
+            }
+          }
+        }
+      } else if (action === 'search') {
+        const nameFilter = options.name ? options.name.toLowerCase() : '';
+        if (!nameFilter) {
+          spinner.fail('--name is required for search. Example: fig library search --name "button"');
+          process.exit(1);
+        }
+        spinner.text = `Searching indexed libraries for "${options.name}"...`;
+        const libDir = join(homedir(), '.figma-local', 'libraries');
+        if (!existsSync(libDir)) {
+          spinner.fail('No indexed libraries found. Open a library file in Figma and run: fig library index');
+          process.exit(1);
+        }
+        const files = readdirSync(libDir).filter(f => f.endsWith('.json'));
+        if (files.length === 0) {
+          spinner.fail('No indexed libraries found. Open a library file in Figma and run: fig library index');
+          process.exit(1);
+        }
+        const results = [];
+        for (const file of files) {
+          try {
+            const lib = JSON.parse(readFileSync(join(libDir, file), 'utf8'));
+            for (const comp of lib.components) {
+              const matchName = comp.name.toLowerCase().includes(nameFilter);
+              const matchSet = comp.componentSet && comp.componentSet.toLowerCase().includes(nameFilter);
+              const matchDesc = comp.description && comp.description.toLowerCase().includes(nameFilter);
+              if (matchName || matchSet || matchDesc) {
+                results.push({ ...comp, library: lib.fileName });
+              }
+            }
+          } catch (e) { /* skip corrupt files */ }
+        }
+        spinner.succeed(`Found ${results.length} component${results.length !== 1 ? 's' : ''} matching "${options.name}"`);
+        if (options.json) {
+          console.log(JSON.stringify(results, null, 2));
+        } else {
+          if (results.length === 0) {
+            console.log(chalk.yellow('  No matches. Try a different search term, or index more libraries with: fig library index'));
+          }
+          let currentLib = '';
+          for (const c of results) {
+            if (c.library !== currentLib) {
+              currentLib = c.library;
+              console.log(chalk.cyan(`\n  ${currentLib}`));
+            }
+            const setLabel = c.componentSet ? chalk.gray(` (set: ${c.componentSet})`) : '';
+            console.log(`    ${chalk.white(c.name)}${setLabel}`);
+            console.log(`      ${chalk.gray('key:')} ${c.key}  ${chalk.gray('page:')} ${c.page}  ${chalk.gray(`${c.w}x${c.h}`)}`);
+            if (c.description) console.log(`      ${chalk.gray('desc:')} ${c.description}`);
+          }
+        }
+      } else if (action === 'list') {
+        spinner.text = 'Loading indexed libraries...';
+        const libDir = join(homedir(), '.figma-local', 'libraries');
+        if (!existsSync(libDir)) {
+          spinner.fail('No indexed libraries found. Open a library file in Figma and run: fig library index');
+          process.exit(1);
+        }
+        const files = readdirSync(libDir).filter(f => f.endsWith('.json'));
+        if (files.length === 0) {
+          spinner.fail('No indexed libraries found. Open a library file in Figma and run: fig library index');
+          process.exit(1);
+        }
+        const libs = [];
+        for (const file of files) {
+          try {
+            const lib = JSON.parse(readFileSync(join(libDir, file), 'utf8'));
+            libs.push({
+              fileName: lib.fileName,
+              componentCount: lib.componentCount,
+              pageCount: lib.pageCount,
+              indexedAt: lib.indexedAt,
+              path: join(libDir, file)
+            });
+          } catch (e) { /* skip corrupt files */ }
+        }
+        spinner.succeed(`${libs.length} indexed librar${libs.length !== 1 ? 'ies' : 'y'}`);
+        if (options.json) {
+          console.log(JSON.stringify(libs, null, 2));
+        } else {
+          for (const lib of libs) {
+            console.log(`  ${chalk.white(lib.fileName)}`);
+            console.log(`    ${chalk.gray('components:')} ${lib.componentCount}  ${chalk.gray('pages:')} ${lib.pageCount}  ${chalk.gray('indexed:')} ${lib.indexedAt}`);
+          }
+        }
       } else {
-        spinner.fail(`Unknown action: ${action}. Use: collections, variables, components, import`);
+        spinner.fail(`Unknown action: ${action}. Use: collections, variables, components, index, search, list, import`);
         process.exit(1);
       }
     } catch (e) {
