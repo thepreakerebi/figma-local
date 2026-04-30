@@ -32,6 +32,9 @@ Control Figma Desktop with Claude Code. Direct connection — no API key, no MCP
 | "compare two Figma links" | `fig compare --a-link "https://..." --b-link "https://..."` |
 | "export as PNG/SVG" | `fig export png` |
 | "lint / accessibility check" | `fig lint` |
+| "audit this component" | `fig component-audit` (selection) |
+| "audit component named X" | `fig component-audit "X"` |
+| "audit all components" | `fig component-audit --all` |
 | "list variables" | `fig var list` |
 | "export as CSS / Tailwind" | `fig var export css` |
 | "find node named X" | `fig find "X"` |

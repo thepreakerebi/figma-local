@@ -213,6 +213,39 @@ Lint rules: `no-default-names`, `no-deeply-nested`, `no-empty-frames`, `prefer-a
 
 Presets: `recommended`, `strict`, `accessibility`, `design-system`
 
+## Component Audit
+
+Quality audit for individual components or the entire file. Checks naming, variable bindings, auto layout, variants, hidden layers, and more. Each component gets a score (0–100).
+
+```bash
+fig component-audit                      # Audit current selection
+fig component-audit "Button"             # Audit component named "Button"
+fig component-audit --all                # Audit ALL components on current page
+fig component-audit --node "123:456"     # Audit by node ID
+fig component-audit --all --json         # Machine-readable JSON output
+fig component-audit --all --verbose      # Include info-level issues
+```
+
+**Rules checked:**
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| `missing-description` | warning | Component has no description |
+| `incomplete-variants` | warning | Component set missing expected variant combinations |
+| `hidden-layer` | info | Child layer is hidden |
+| `generic-layer-name` | info | Layer has default name (Frame 2, Rectangle, …) |
+| `empty-text` | warning | Text node with no content |
+| `hardcoded-color` | warning | Solid fill with no variable binding |
+| `no-auto-layout` | info | Frame with 2+ children but no auto layout |
+| `detached-instance` | error | Instance whose main component is missing |
+| `deep-nesting` | info | Node nested 7+ levels deep |
+
+**Score:** `100 − (errors × 15) − (warnings × 5) − (info × 2)` — higher is better.
+
+- ≥ 80 = Good
+- 60–79 = Fair
+- < 60 = Needs work
+
 ## XPath Queries
 
 ```bash

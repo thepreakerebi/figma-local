@@ -21,6 +21,10 @@ import {
 } from './read.js';
 import { generatePrompt } from './prompt-templates.js';
 import {
+  buildSingleAuditCode, buildAllAuditCode, buildSelectionAuditCode,
+  formatAuditResult, formatAllAuditResult
+} from './component-audit.js';
+import {
   nullDevice, killPort, getPortPid, sleepAfterStop,
   startFigmaApp, killFigmaApp,
   getFigmaVersion, isFigmaRunning, platformName
@@ -11199,4 +11203,121 @@ Examples:
     }
   });
 
+// ─── Component Audit ────────────────────────────────────────────────────────
+
+program
+  .command('component-audit [name]')
+  .description('Audit components for quality issues (naming, tokens, layout, variants, detached instances)')
+  .option('--all', 'Audit ALL components on the current page')
+  .option('--node <nodeId>', 'Audit a specific component by node ID')
+  .option('--json', 'Output raw JSON')
+  .option('--verbose', 'Show info-level issues in addition to errors/warnings')
+  .addHelpText('after', `
+Checks run on every component:
+  missing-description    No description set on the component
+  incomplete-variants    Component set is missing expected variant combinations
+  hidden-layer           Child layer is hidden (dead weight)
+  generic-layer-name     Layer has a default name like "Frame 2" or "Rectangle"
+  empty-text             Text node with no content
+  hardcoded-color        Solid fill with no variable binding
+  no-auto-layout         Frame with 2+ children but no auto layout
+  detached-instance      Instance whose main component is missing
+  deep-nesting           Node nested 7+ levels deep
+
+Severity:
+  error    Must fix — structural or correctness problem
+  warning  Should fix — design system or quality concern
+  info     Nice to fix — best practice recommendation (shown with --verbose)
+
+Examples:
+  fig component-audit                     Audit current selection
+  fig component-audit "Button"            Audit the component named "Button"
+  fig component-audit --all               Audit every component on this page
+  fig component-audit --node "123:456"    Audit by node ID
+  fig component-audit --all --json        Machine-readable output
+  fig component-audit --all --verbose     Include info-level issues
+`)
+  .action(async (name, options) => {
+    await checkConnection();
+    const spinner = ora('Running component audit...').start();
+
+    try {
+      // ── Determine which audit code to run ──────────────────────────────────
+      let code;
+      let isAll = false;
+
+      if (options.all) {
+        isAll = true;
+        code = buildAllAuditCode();
+        spinner.text = 'Auditing all components on page...';
+      } else if (options.node) {
+        code = buildSingleAuditCode(options.node);
+        spinner.text = `Auditing node ${options.node}...`;
+      } else if (name) {
+        // Find component by name via metadata, then audit it
+        spinner.text = `Looking up component "${name}"...`;
+        const findCode = `
+          (function() {
+            function findByName(node, n) {
+              if ((node.type === 'COMPONENT' || node.type === 'COMPONENT_SET' || node.type === 'FRAME') &&
+                  node.name.toLowerCase() === n.toLowerCase()) return node.id;
+              if (node.children) {
+                for (var i = 0; i < node.children.length; i++) {
+                  var found = findByName(node.children[i], n);
+                  if (found) return found;
+                }
+              }
+              return null;
+            }
+            return findByName(figma.currentPage, ${JSON.stringify(name)});
+          })()
+        `;
+        const nodeId = await daemonExec('eval', { code: findCode });
+        if (!nodeId) {
+          spinner.fail(`No component named "${name}" found on the current page.`);
+          process.exit(1);
+        }
+        code = buildSingleAuditCode(nodeId);
+        spinner.text = `Auditing "${name}"...`;
+      } else {
+        // Default: audit current selection
+        code = buildSelectionAuditCode();
+        spinner.text = 'Auditing selection...';
+      }
+
+      const result = await daemonExec('eval', { code });
+
+      if (result && result.error) {
+        spinner.fail(result.error);
+        process.exit(1);
+      }
+
+      // ── Output ─────────────────────────────────────────────────────────────
+      if (isAll) {
+        const comps = result.components || [];
+        spinner.succeed(
+          `Audited ${comps.length} component${comps.length !== 1 ? 's' : ''} on page "${result.page}"`
+        );
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(formatAllAuditResult(result, chalk, options.verbose || false));
+        }
+      } else {
+        const score = result.score;
+        const label = score >= 80 ? 'Good' : score >= 60 ? 'Fair' : 'Needs work';
+        spinner.succeed(`Audited "${result.name}" — score ${score}/100 (${label})`);
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(formatAuditResult(result, chalk, options.verbose !== false));
+        }
+      }
+    } catch (e) {
+      spinner.fail(`Audit failed: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
 program.parse();
+
