@@ -215,7 +215,7 @@ Presets: `recommended`, `strict`, `accessibility`, `design-system`
 
 ## Component Audit
 
-Quality audit for individual components or the entire file. Checks naming, variable bindings, auto layout, variants, hidden layers, and more. Each component gets a score (0–100).
+Quality audit for individual components or the entire page. Checks token compliance (colors, spacing, typography, effects, border radius), component structure, layout correctness, and layer hygiene. Each component gets a score (0–100), issues grouped by category.
 
 ```bash
 fig component-audit                      # Audit current selection
@@ -226,19 +226,47 @@ fig component-audit --all --json         # Machine-readable JSON output
 fig component-audit --all --verbose      # Include info-level issues
 ```
 
-**Rules checked:**
+**Rules by category:**
 
-| Rule | Severity | Description |
-|------|----------|-------------|
+*Token Compliance* — checks that design values come from Figma variables, not hardcoded numbers
+
+| Rule | Sev | What it flags |
+|------|-----|---------------|
+| `hardcoded-fill-color` | warning | Fill color not bound to a color variable |
+| `hardcoded-stroke-color` | warning | Stroke color not bound to a variable |
+| `hardcoded-effect-color` | warning | Drop shadow / glow color not bound to a variable |
+| `hardcoded-spacing` | warning | Padding or gap value not bound to a spacing variable |
+| `hardcoded-border-radius` | warning | Corner radius not bound to a variable |
+| `missing-text-style` | warning | Text node not using a shared text style |
+| `hardcoded-font-size` | warning | Font size not bound to a variable (and no text style) |
+| `hardcoded-opacity` | info | Non-100% opacity not bound to a variable |
+| `off-type-scale` | info | Font size not on a standard type scale |
+
+*Component Structure*
+
+| Rule | Sev | What it flags |
+|------|-----|---------------|
 | `missing-description` | warning | Component has no description |
+| `missing-component-props` | info | Component exposes no properties at all |
 | `incomplete-variants` | warning | Component set missing expected variant combinations |
-| `hidden-layer` | info | Child layer is hidden |
-| `generic-layer-name` | info | Layer has default name (Frame 2, Rectangle, …) |
-| `empty-text` | warning | Text node with no content |
-| `hardcoded-color` | warning | Solid fill with no variable binding |
-| `no-auto-layout` | info | Frame with 2+ children but no auto layout |
 | `detached-instance` | error | Instance whose main component is missing |
+
+*Layout & Organisation*
+
+| Rule | Sev | What it flags |
+|------|-----|---------------|
+| `no-auto-layout` | info | Frame with 2+ children but no auto layout |
+| `absolute-in-autolayout` | warning | Child pinned absolute inside an auto-layout frame |
+| `non-standard-spacing` | info | Padding / gap value not on the 4px grid |
 | `deep-nesting` | info | Node nested 7+ levels deep |
+
+*Layer Hygiene*
+
+| Rule | Sev | What it flags |
+|------|-----|---------------|
+| `hidden-layer` | info | Invisible layer still in the tree |
+| `generic-layer-name` | info | Default name like "Frame 2" or "Rectangle" |
+| `empty-text` | warning | Text node with no content |
 
 **Score:** `100 − (errors × 15) − (warnings × 5) − (info × 2)` — higher is better.
 
